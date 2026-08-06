@@ -1,332 +1,435 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
 import Link from 'next/link'
 
 export default function InvoicePage() {
-  const businessId = 1
-
   const [stores, setStores] = useState<any[]>([])
-  const [selectedStoreId, setSelectedStoreId] = useState<string>('')
-  const [mutations, setMutations] = useState<any[]>([])
-  const [loading, setLoading] = useState(true)
+  const [products, setProducts] = useState<any[]>([])
+  
+  const [customerName, setCustomerName] = useState('')
+  const [showSuggestions, setShowSuggestions] = useState(false)
+  const wrapperRef = useRef<HTMLDivElement>(null)
 
-  // Form Tambah Toko
-  const [newStoreName, setNewStoreName] = useState('')
-  const [newStorePhone, setNewStorePhone] = useState('')
+  const [status, setStatus] = useState('PAID')
 
-  // Form Bayar Utang
-  const [payAmount, setPayAmount] = useState('')
-  const [payNotes, setPayNotes] = useState('')
+  const [transactionDate, setTransactionDate] = useState(
+    new Date().toISOString().split('T')[0]
+  )
 
-  // Fetch daftar toko
-  async function fetchStores() {
-    setLoading(true)
-    const { data } = await supabase
-      .from('stores')
-      .select('*')
-      .eq('business_id', businessId)
-      .order('name', { ascending: true })
-
-    if (data) {
-      setStores(data)
-      if (data.length > 0 && !selectedStoreId) {
-        setSelectedStoreId(data[0].id.toString())
-      }
-    }
-    setLoading(false)
-  }
-
-  // Fetch mutasi tagihan toko terpilih
-  async function fetchMutations(storeId: string) {
-    if (!storeId) return
-    const { data } = await supabase
-      .from('receivable_mutations')
-      .select('*')
-      .eq('store_id', parseInt(storeId))
-      .order('created_at', { ascending: false })
-
-    if (data) setMutations(data)
-  }
+  const [dueDate, setDueDate] = useState('')
+  
+  const [orderItems, setOrderItems] = useState([
+    { product_id: '', quantity: 1, unit: 'Dus', price: 0 }
+  ])
+  
+  const [loading, setLoading] = useState(false)
 
   useEffect(() => {
-    fetchStores()
+    async function fetchData() {
+      const { data: storeData } = await supabase.from('stores').select('name')
+      if (storeData) {
+        setStores(storeData.map(s => s.name))
+      }
+
+      const { data: prodData } = await supabase.from('products').select('*').order('name')
+      if (prodData) {
+        setProducts(prodData)
+      }
+    }
+    fetchData()
+
+    function handleClickOutside(event: MouseEvent) {
+      if (wrapperRef.current && !wrapperRef.current.contains(event.target as Node)) {
+        setShowSuggestions(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
-  useEffect(() => {
-    if (selectedStoreId) {
-      fetchMutations(selectedStoreId)
+  const filteredStores = stores.filter(store => 
+    store.toLowerCase().includes(customerName.toLowerCase())
+  )
+
+  const addProductRow = () => {
+    setOrderItems([...orderItems, { product_id: '', quantity: 1, unit: 'Dus', price: 0 }])
+  }
+
+  const removeProductRow = (index: number) => {
+    if (orderItems.length === 1) return
+    const updated = orderItems.filter((_, i) => i !== index)
+    setOrderItems(updated)
+  }
+
+  const handleItemChange = (index: number, field: 'product_id' | 'quantity' | 'unit' | 'price', value: any) => {
+    const updated = [...orderItems]
+
+    if (field === 'product_id') {
+      updated[index].product_id = value
+      const selectedProd = products.find(p => String(p.id) === String(value))
+      
+      if (selectedProd) {
+        if (selectedProd.is_retail_allowed === false) {
+          updated[index].unit = 'Dus'
+          updated[index].price = Number(selectedProd.selling_price_per_box) || 0
+        } else {
+          if (updated[index].unit === 'Dus') {
+            updated[index].price = Number(selectedProd.selling_price_per_box) || 0
+          } else {
+            updated[index].price = Number(selectedProd.selling_price_per_bottle) || 0
+          }
+        }
+      } else {
+        updated[index].price = 0
+      }
+    } else if (field === 'unit') {
+      const selectedProd = products.find(p => String(p.id) === String(updated[index].product_id))
+      
+      if (value === 'Pcs' && selectedProd && selectedProd.is_retail_allowed === false) {
+        alert('Produk ini hanya boleh dijual per Dus!')
+        return
+      }
+
+      updated[index].unit = value
+      if (selectedProd) {
+        if (value === 'Dus') {
+          updated[index].price = Number(selectedProd.selling_price_per_box) || 0
+        } else {
+          updated[index].price = Number(selectedProd.selling_price_per_bottle) || 0
+        }
+      }
+    } else if (field === 'quantity') {
+      updated[index].quantity = value === '' ? '' : value
+    } else if (field === 'price') {
+      updated[index].price = value === '' ? '' : value
     }
-  }, [selectedStoreId])
 
-  // Handler Tambah Toko Baru
-  async function handleAddStore(e: React.FormEvent) {
+    setOrderItems(updated)
+  }
+
+  const grandTotal = orderItems.reduce((sum, item) => {
+    const qty = item.quantity === '' ? 0 : Number(item.quantity)
+    const price = item.price === '' ? 0 : Number(item.price)
+    return sum + (qty * price)
+  }, 0)
+
+  async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!newStoreName) return
+    if (!customerName.trim() || orderItems.some(item => !item.product_id)) {
+      alert('Mohon lengkapi nama pembeli dan pilih produk dengan benar!')
+      return
+    }
 
-    const { error } = await supabase.from('stores').insert([
+    setLoading(true)
+    const transactionTimestamp = new Date().toISOString()
+
+    const productSummaryList = orderItems.map(item => {
+      const selectedProd = products.find(p => String(p.id) === String(item.product_id))
+      const name = selectedProd ? selectedProd.name : 'Unknown Product'
+      const qty = item.quantity === '' ? 1 : Number(item.quantity)
+      return `${name} (${qty} ${item.unit})`
+    })
+
+    const combinedProductName = productSummaryList.join(', ')
+    const totalJenis = orderItems.length
+
+    const initialPaid = status === 'PAID' ? grandTotal : 0
+
+    const { error: txError } = await supabase.from('transactions').insert([
       {
-        business_id: businessId,
-        name: newStoreName,
-        phone: newStorePhone,
-        receivable_balance: 0
+        customer_name: customerName.trim(),
+        product_name: combinedProductName,
+        qty: totalJenis,
+        unit: 'Jenis',
+        price_per_unit: grandTotal,
+        total_price: grandTotal,
+        paid_amount: initialPaid,
+        payment_status: status,
+        transaction_date: transactionDate,
+        due_date: dueDate || null,
+        created_at: transactionTimestamp,
       }
     ])
 
-    if (error) {
-      alert('Gagal menambah toko: ' + error.message)
-    } else {
-      alert('Toko/Pelanggan berhasil ditambahkan!')
-      setNewStoreName('')
-      setNewStorePhone('')
-      fetchStores()
+    if (txError) {
+      alert('Gagal menyimpan transaksi: ' + txError.message)
+      setLoading(false)
+      return
     }
-  }
 
-  // Handler Bayar Utang / Cicilan
-  async function handlePayReceivable(e: React.FormEvent) {
-    e.preventDefault()
-    if (!selectedStoreId || !payAmount) return
+    for (const item of orderItems) {
+      const selectedProd = products.find(p => String(p.id) === String(item.product_id))
+      if (selectedProd) {
+        const finalQty = item.quantity === '' ? 1 : Number(item.quantity)
+        let currentBox = Number(selectedProd.box_stock) || 0
+        let currentBottle = Number(selectedProd.bottle_stock) || 0
+        const unitsPerBox = Number(selectedProd.units_per_box) || 12
 
-    const amount = parseFloat(payAmount) || 0
-    const store = stores.find((s) => s.id === parseInt(selectedStoreId))
+        if (item.unit === 'Dus') {
+          currentBox = Math.max(0, currentBox - finalQty)
+        } else {
+          let totalPcs = (currentBox * unitsPerBox) + currentBottle - finalQty
+          if (totalPcs < 0) totalPcs = 0
+          currentBox = Math.floor(totalPcs / unitsPerBox)
+          currentBottle = totalPcs % unitsPerBox
+        }
 
-    if (!store) return
-
-    const newBalance = (parseFloat(store.receivable_balance) || 0) - amount
-
-    // Update Sisa Tagihan Toko
-    await supabase
-      .from('stores')
-      .update({ receivable_balance: newBalance })
-      .eq('id', store.id)
-
-    // Catat Riwayat Pembayaran
-    await supabase.from('receivable_mutations').insert([
-      {
-        business_id: businessId,
-        store_id: store.id,
-        mutation_type: 'PAYMENT',
-        amount: amount,
-        notes: payNotes || 'Pembayaran / Pelunasan Utang'
+        await supabase
+          .from('products')
+          .update({ 
+            box_stock: currentBox,
+            bottle_stock: currentBottle 
+          })
+          .eq('id', selectedProd.id)
       }
-    ])
+    }
 
-    alert('Pembayaran berhasil dicatat!')
-    setPayAmount('')
-    setPayNotes('')
-    fetchStores()
-    fetchMutations(selectedStoreId)
-  }
-
-  // FUNGSI UTAMA: Kirim Tagihan via WhatsApp
-  function handleSendWhatsApp(store: any) {
-    let phone = store.phone ? store.phone.replace(/[^0-9]/g, '') : ''
+    setLoading(false)
+    alert(`Nota berhasil disimpan & stok dipotong! Total: Rp ${grandTotal.toLocaleString('id-ID')}`)
     
-    // Konversi nomor 08xx jadi 628xx
-    if (phone.startsWith('0')) {
-      phone = '62' + phone.slice(1)
-    }
+    setCustomerName('')
+    setDueDate('')
+    setOrderItems([{ product_id: '', quantity: 1, unit: 'Dus', price: 0 }])
 
-    const message = `Halo ${store.name},%0A%0AMengingatkan rincian total tagihan utang belanja minuman saat ini sebesar *Rp ${Number(store.receivable_balance || 0).toLocaleString()}*.%0A%0AMohon konfirmasi jika sudah melakukan pembayaran. Terima kasih! 🙏`
-
-    const waUrl = phone 
-      ? `https://wa.me/${phone}?text=${message}`
-      : `https://wa.me/?text=${message}`
-
-    window.open(waUrl, '_blank')
+    const { data: prodData } = await supabase.from('products').select('*').order('name')
+    if (prodData) setProducts(prodData)
   }
-
-  const selectedStore = stores.find((s) => s.id === parseInt(selectedStoreId))
 
   return (
-    <main className="min-h-screen bg-gray-100 p-6 text-gray-800">
-      <div className="max-w-6xl mx-auto space-y-6">
+    <div className="p-6 max-w-4xl mx-auto space-y-6 text-slate-100">
+      {/* Tombol Navigasi Kembali */}
+      <div>
+        <Link 
+          href="/dashboard"
+          className="inline-flex items-center text-xs font-semibold text-slate-400 hover:text-white transition gap-1"
+        >
+          ← Kembali ke Dashboard
+        </Link>
+      </div>
 
-        {/* HEADER & NAVIGASI */}
-        <div className="flex justify-between items-center bg-white p-4 rounded-xl shadow-sm border">
-          <div>
-            <h1 className="text-2xl font-bold text-gray-800">🧾 Manajemen Invoice & Tagihan</h1>
-            <p className="text-xs text-gray-500">Kelola utang pelanggan dan catat pembayaran/pelunasan</p>
-          </div>
-          <Link
-            href="/"
-            className="bg-gray-600 text-white px-4 py-2 rounded-lg font-bold text-sm hover:bg-gray-700 transition"
-          >
-            ⬅️ Kembali ke Kasir
-          </Link>
+      {/* Card Utama Form */}
+      <div className="bg-slate-900 p-6 sm:p-8 rounded-2xl border border-slate-800 shadow-2xl space-y-6">
+        <div className="border-b border-slate-800/80 pb-4">
+          <h1 className="text-xl font-bold text-white flex items-center gap-2">
+            <span>➕</span> Input Pesanan Multi-Produk
+          </h1>
+          <p className="text-xs text-slate-400 mt-1">
+            Harga otomatis terisi berdasarkan jenis produk dan satuan (Dus/Pcs).
+          </p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-
-          {/* FORM 1: TAMBAH PELANGGAN / TOKO BARU */}
-          <div className="bg-white p-6 rounded-xl shadow-sm border md:col-span-1 space-y-4">
-            <h2 className="text-lg font-bold text-gray-700">➕ Tambah Pelanggan / Toko</h2>
-            <form onSubmit={handleAddStore} className="space-y-3">
-              <div>
-                <label className="block text-xs font-medium">Nama Toko / Pemilik</label>
-                <input
-                  type="text"
-                  required
-                  value={newStoreName}
-                  onChange={(e) => setNewStoreName(e.target.value)}
-                  placeholder="Contoh: Toko Berkah / Pak Budi"
-                  className="w-full border p-2 rounded mt-1 text-sm bg-white text-black"
-                />
-              </div>
-              <div>
-                <label className="block text-xs font-medium">Nomor WhatsApp (Opsional)</label>
-                <input
-                  type="text"
-                  value={newStorePhone}
-                  onChange={(e) => setNewStorePhone(e.target.value)}
-                  placeholder="Contoh: 08123456789"
-                  className="w-full border p-2 rounded mt-1 text-sm bg-white text-black"
-                />
-              </div>
-              <button type="submit" className="w-full bg-blue-600 text-white font-bold py-2 rounded hover:bg-blue-700 text-sm">
-                Simpan Toko Baru
-              </button>
-            </form>
-          </div>
-
-          {/* DETAIL TOKO & FORM BAYAR UTANG */}
-          <div className="bg-white p-6 rounded-xl shadow-sm border md:col-span-2 space-y-4">
-            <h2 className="text-lg font-bold text-gray-700">💳 Pilih Toko & Catat Pelunasan</h2>
-
-            <div className="space-y-3">
-              <div>
-                <label className="block text-xs font-medium">Pilih Pelanggan / Toko</label>
-                <select
-                  value={selectedStoreId}
-                  onChange={(e) => setSelectedStoreId(e.target.value)}
-                  className="w-full border p-2 rounded mt-1 font-semibold text-black bg-white"
-                >
-                  {stores.map((s) => (
-                    <option key={s.id} value={s.id}>
-                      {s.name} (Sisa Utang: Rp {Number(s.receivable_balance || 0).toLocaleString()})
-                    </option>
-                  ))}
-                </select>
-              </div>
-
-              {/* CARD INFO UTANG & TOMBOL WA HIJAU (SELALU MUNCUL) */}
-              {selectedStore && (
-                <div className="bg-blue-50 p-4 rounded-xl border border-blue-200 flex flex-wrap justify-between items-center gap-3">
-                  <div>
-                    <span className="text-xs text-gray-500 font-semibold uppercase">Total Tagihan {selectedStore.name}:</span>
-                    <p className="text-2xl font-extrabold text-red-600">
-                      Rp {Number(selectedStore.receivable_balance || 0).toLocaleString()}
-                    </p>
-                    {selectedStore.phone && (
-                      <p className="text-xs text-gray-600 mt-0.5">📱 WA: {selectedStore.phone}</p>
-                    )}
-                  </div>
-
-                  {/* TOMBOL WA DIPASTIKAN MUNCUL DI SINI */}
-                  <button
-                    type="button"
-                    onClick={() => handleSendWhatsApp(selectedStore)}
-                    className="bg-green-600 text-white text-sm font-bold px-4 py-2.5 rounded-lg hover:bg-green-700 transition flex items-center gap-2 shadow-sm"
+        <form onSubmit={handleSubmit} className="space-y-6">
+          {/* Input Nama Toko + Autocomplete */}
+          <div className="relative" ref={wrapperRef}>
+            <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1.5">
+              Nama Pembeli / Toko / Tetangga
+            </label>
+            <input 
+              type="text" 
+              placeholder="Ketik nama toko..."
+              value={customerName}
+              onChange={(e) => {
+                setCustomerName(e.target.value)
+                setShowSuggestions(true)
+              }}
+              onFocus={() => setShowSuggestions(true)}
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition"
+              required
+            />
+            
+            {showSuggestions && filteredStores.length > 0 && (
+              <ul className="absolute z-30 left-0 right-0 bg-slate-900 border border-slate-800 rounded-xl mt-1 shadow-2xl max-h-48 overflow-y-auto divide-y divide-slate-800/60">
+                {filteredStores.map((store, idx) => (
+                  <li 
+                    key={idx}
+                    onClick={() => {
+                      setCustomerName(store)
+                      setShowSuggestions(false)
+                    }}
+                    className="px-4 py-2.5 text-sm hover:bg-slate-800/80 cursor-pointer text-slate-200 flex items-center justify-between transition"
                   >
-                    💬 Kirim Tagihan via WA
-                  </button>
-                </div>
-              )}
-            </div>
-
-            {/* FORM BAYAR UTANG */}
-            {selectedStore && (
-              <form onSubmit={handlePayReceivable} className="p-4 bg-gray-50 rounded-lg border space-y-3 mt-4">
-                <h3 className="font-bold text-sm text-gray-700">📥 Form Catat Pembayaran / Cicilan</h3>
-                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                  <div>
-                    <label className="block text-xs font-medium">Jumlah Bayar (Rp)</label>
-                    <input
-                      type="number"
-                      required
-                      min="1"
-                      value={payAmount}
-                      onChange={(e) => setPayAmount(e.target.value)}
-                      placeholder="Rp"
-                      className="w-full border p-2 rounded mt-1 text-sm bg-white text-black font-bold"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-xs font-medium">Catatan / Keterangan</label>
-                    <input
-                      type="text"
-                      value={payNotes}
-                      onChange={(e) => setPayNotes(e.target.value)}
-                      placeholder="Contoh: Transfer BCA / Titip Tunai"
-                      className="w-full border p-2 rounded mt-1 text-sm bg-white text-black"
-                    />
-                  </div>
-                </div>
-                <button type="submit" className="w-full bg-green-600 text-white font-bold py-2 rounded hover:bg-green-700 text-sm">
-                  Simpan Pembayaran
-                </button>
-              </form>
+                    <span className="flex items-center gap-2">🏪 {store}</span>
+                    <span className="text-xs text-blue-400 font-medium bg-blue-500/10 px-2 py-0.5 rounded border border-blue-500/20">Pilih Toko</span>
+                  </li>
+                ))}
+              </ul>
             )}
           </div>
 
-        </div>
+          {/* Input Tanggal Transaksi */}
+          <div className="space-y-1.5">
+            <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider">
+              Tanggal Nota / Transaksi
+            </label>
+            <input 
+              type="date"
+              value={transactionDate}
+              onChange={(e) => setTransactionDate(e.target.value)}
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition [color-scheme:dark]"
+            />
+          </div>
 
-        {/* TABEL RIWAYAT MUTASI */}
-        <div className="bg-white p-6 rounded-xl shadow-sm border space-y-4">
-          <h2 className="text-lg font-bold text-gray-700">📜 Riwayat Transaksi & Pembayaran Toko Ini</h2>
-          {loading ? (
-            <p className="text-gray-500 text-sm">Memuat riwayat...</p>
-          ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-left border-collapse text-sm">
-                <thead>
-                  <tr className="bg-gray-50 border-b text-gray-600">
-                    <th className="p-3 font-semibold">Tanggal</th>
-                    <th className="p-3 font-semibold">Jenis Transaksi</th>
-                    <th className="p-3 font-semibold">Keterangan</th>
-                    <th className="p-3 font-semibold text-right">Jumlah (Rp)</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {mutations.length === 0 ? (
-                    <tr>
-                      <td colSpan={4} className="p-4 text-center text-gray-400">
-                        Belum ada riwayat transaksi untuk toko ini.
-                      </td>
-                    </tr>
-                  ) : (
-                    mutations.map((m) => (
-                      <tr key={m.id} className="border-b hover:bg-gray-50">
-                        <td className="p-3 text-xs text-gray-500">
-                          {new Date(m.created_at).toLocaleString('id-ID')}
-                        </td>
-                        <td className="p-3">
-                          {m.mutation_type === 'NEW_INVOICE' ? (
-                            <span className="px-2 py-1 bg-red-100 text-red-700 font-semibold text-xs rounded">
-                              ➕ Utang Baru (Bon)
-                            </span>
-                          ) : (
-                            <span className="px-2 py-1 bg-green-100 text-green-700 font-semibold text-xs rounded">
-                              ➖ Bayar Utang
-                            </span>
-                          )}
-                        </td>
-                        <td className="p-3 font-medium">{m.notes || '-'}</td>
-                        <td className={`p-3 font-bold text-right ${m.mutation_type === 'NEW_INVOICE' ? 'text-red-600' : 'text-green-600'}`}>
-                          {m.mutation_type === 'NEW_INVOICE' ? '+' : '-'} Rp {Number(m.amount).toLocaleString()}
-                        </td>
-                      </tr>
-                    ))
-                  )}
-                </tbody>
-              </table>
+          {/* Baris Daftar Produk */}
+          <div className="space-y-3">
+            <div className="flex justify-between items-center">
+              <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider">
+                Daftar Produk Dipesan
+              </label>
+              <button 
+                type="button"
+                onClick={addProductRow}
+                className="text-xs bg-emerald-500/10 text-emerald-400 font-semibold px-3 py-1.5 rounded-lg border border-emerald-500/20 hover:bg-emerald-500/20 transition flex items-center gap-1"
+              >
+                <span>+</span> Tambah Jenis Produk Lain
+              </button>
             </div>
-          )}
-        </div>
 
+            {orderItems.map((item, index) => {
+              const selectedProd = products.find(p => String(p.id) === String(item.product_id))
+              const isRetailAllowed = selectedProd ? selectedProd.is_retail_allowed !== false : true
+
+              return (
+                <div key={index} className="flex flex-col sm:flex-row items-center gap-3 p-3.5 bg-slate-950/60 rounded-xl border border-slate-800/80">
+                  {/* Select Produk */}
+                  <div className="w-full sm:flex-1">
+                    <select 
+                      value={item.product_id}
+                      onChange={(e) => handleItemChange(index, 'product_id', e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
+                      required
+                    >
+                      <option value="" className="bg-slate-900 text-slate-400">-- Pilih Produk --</option>
+                      {products.map((p) => {
+                        const bBox = p.box_stock || 0
+                        const bBottle = p.bottle_stock || 0
+                        const limit = p.units_per_box || 12
+                        const totalPcs = (bBox * limit) + bBottle
+                        const finalBox = Math.floor(totalPcs / limit)
+                        const finalBottle = totalPcs % limit
+
+                        let stockText = 'Habis'
+                        if (finalBox > 0 && finalBottle === 0) stockText = `${finalBox} Dus`
+                        else if (finalBox === 0 && finalBottle > 0) stockText = `${finalBottle} Pcs`
+                        else if (finalBox > 0 && finalBottle > 0) stockText = `${finalBox} Dus ${finalBottle} Pcs`
+
+                        return (
+                          <option key={p.id} value={p.id} className="bg-slate-900 text-white">
+                            {p.name} (Stok: {stockText}) {p.is_retail_allowed === false ? '- Grosir' : ''}
+                          </option>
+                        )
+                      })}
+                    </select>
+                  </div>
+
+                  {/* Qty Input */}
+                  <div className="w-full sm:w-24">
+                    <input 
+                      type="number" 
+                      min="1"
+                      placeholder="Jumlah"
+                      value={item.quantity}
+                      onChange={(e) => handleItemChange(index, 'quantity', e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-sm text-white text-center focus:outline-none focus:border-blue-500"
+                      required
+                    />
+                  </div>
+
+                  {/* Unit Select */}
+                  <div className="w-full sm:w-32">
+                    <select
+                      value={item.unit}
+                      onChange={(e) => handleItemChange(index, 'unit', e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-sm text-white focus:outline-none font-medium focus:border-blue-500"
+                    >
+                      <option value="Dus" className="bg-slate-900 text-white">Dus</option>
+                      {isRetailAllowed && <option value="Pcs" className="bg-slate-900 text-white">Pcs (Eceran)</option>}
+                    </select>
+                  </div>
+
+                  {/* Price Input */}
+                  <div className="w-full sm:w-36">
+                    <input 
+                      type="number" 
+                      placeholder="Harga Satuan"
+                      value={item.price}
+                      onChange={(e) => handleItemChange(index, 'price', e.target.value)}
+                      className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-sm text-emerald-400 font-bold text-right focus:outline-none focus:border-blue-500"
+                      required
+                    />
+                  </div>
+
+                  {/* Hapus Baris */}
+                  {orderItems.length > 1 && (
+                    <button 
+                      type="button"
+                      onClick={() => removeProductRow(index)}
+                      className="p-2 text-rose-400 hover:bg-rose-500/10 rounded-lg transition"
+                      title="Hapus baris ini"
+                    >
+                      ✕
+                    </button>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+
+          {/* Status Pembayaran & Total Tagihan */}
+          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-4 border-t border-slate-800">
+            <div>
+              <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1.5">
+                Status Pembayaran
+              </label>
+              <select 
+                value={status}
+                onChange={(e) => setStatus(e.target.value)}
+                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500"
+              >
+                <option value="PAID" className="bg-slate-900 text-white">PAID (Lunas)</option>
+                <option value="UNPAID" className="bg-slate-900 text-white">UNPAID (Belum Bayar / Tempo)</option>
+              </select>
+            </div>
+
+            <div className="flex flex-col justify-end items-end p-3.5 bg-slate-950/60 border border-slate-800/80 rounded-xl space-y-0.5">
+              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
+                Total Tagihan Keseluruhan
+              </span>
+              <span className="text-2xl font-black text-blue-400">
+                Rp {grandTotal.toLocaleString('id-ID')}
+              </span>
+            </div>
+          </div>
+
+          {/* Input Jatuh Tempo (Jika Tempo) */}
+          <div className="bg-amber-500/10 border border-amber-500/20 p-4 rounded-xl space-y-1.5">
+            <label className="block text-xs font-bold text-amber-400 uppercase tracking-wider">
+              Tanggal Jatuh Tempo (Tagihan Sales)
+            </label>
+            <input 
+              type="date"
+              value={dueDate}
+              onChange={(e) => setDueDate(e.target.value)}
+              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-amber-500 [color-scheme:dark]"
+            />
+            <p className="text-[11px] text-amber-300/80">
+              Atur tanggal kapan sales harus menagih nota ini ke toko.
+            </p>
+          </div>
+
+          {/* Tombol Submit */}
+          <div className="pt-2">
+            <button 
+              type="submit" 
+              disabled={loading}
+              className="w-full bg-blue-600 hover:bg-blue-500 text-white font-extrabold py-3.5 rounded-xl shadow-lg shadow-blue-600/30 transition transform active:scale-98 disabled:opacity-50 text-sm tracking-wide"
+            >
+              {loading ? 'Menyimpan...' : 'Simpan Nota & Potong Stok 🚀'}
+            </button>
+          </div>
+        </form>
       </div>
-    </main>
+    </div>
   )
 }
