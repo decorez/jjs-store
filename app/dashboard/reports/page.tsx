@@ -1,161 +1,176 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 import Link from 'next/link'
 
+interface Transaction {
+  id: number
+  created_at: string
+  transaction_date?: string
+  customer_name: string
+  product_name: string
+  total_price: number
+  paid_amount: number
+  payment_status: string
+}
+
 export default function ReportsPage() {
-  const [transactions, setTransactions] = useState<any[]>([])
+  const [transactions, setTransactions] = useState<Transaction[]>([])
   const [loading, setLoading] = useState(true)
 
+  const fetchTransactions = async () => {
+    setLoading(true)
+    const { data, error } = await supabase
+      .from('transactions')
+      .select('*')
+      .order('id', { ascending: false })
+
+    if (data) setTransactions(data)
+    if (error) console.error('Error fetching transactions:', error.message)
+    setLoading(false)
+  }
+
   useEffect(() => {
-    async function fetchTransactions() {
-      const { data } = await supabase.from('transactions').select('*').order('id', { ascending: false })
-      if (data) setTransactions(data)
-      setLoading(false)
-    }
     fetchTransactions()
   }, [])
 
-  const formatStatus = (status: string) => {
-    if (!status) return 'UNPAID'
-    const upper = status.toUpperCase()
-    if (upper === 'PAID' || upper === 'LUNAS') return 'PAID'
-    return 'UNPAID'
-  }
-
-  const totalOmset = transactions.reduce((sum, tx) => sum + Number(tx.total_price || 0), 0)
-  
-  const totalPaid = transactions
-    .filter(tx => formatStatus(tx.payment_status) === 'PAID')
-    .reduce((sum, tx) => sum + Number(tx.total_price || 0), 0)
-
-  const totalUnpaid = transactions
-    .filter(tx => formatStatus(tx.payment_status) !== 'PAID')
-    .reduce((sum, tx) => sum + Number(tx.total_price || 0), 0)
+  // Kalkulasi Akurat & Akumulatif (Sinkron dengan halaman Sales)
+  const totalOmzet = transactions.reduce((sum, tx) => sum + (Number(tx.total_price) || 0), 0)
+  const totalPaidCash = transactions.reduce((sum, tx) => sum + (Number(tx.paid_amount) || 0), 0)
+  const totalPiutang = totalOmzet - totalPaidCash
 
   return (
-    <div className="p-4 sm:p-6 max-w-7xl mx-auto space-y-6 text-slate-100">
-      {/* Tombol Kembali */}
-      <div>
+    <div className="p-3.5 sm:p-6 max-w-7xl mx-auto space-y-6 text-slate-900 dark:text-slate-100 transition-colors duration-300">
+      {/* Header Navigasi */}
+      <div className="flex items-center justify-between">
         <Link 
           href="/dashboard"
-          className="inline-flex items-center text-xs font-semibold text-slate-400 hover:text-white transition gap-1"
+          className="inline-flex items-center text-xs sm:text-sm font-semibold text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition gap-1"
         >
           ← Kembali ke Dashboard
         </Link>
       </div>
 
-      {/* Header Utama */}
-      <div className="bg-slate-900 p-6 rounded-2xl border border-slate-800 shadow-2xl space-y-1">
-        <h1 className="text-xl font-bold text-white flex items-center gap-2">
+      {/* Title Header */}
+      <div className="bg-white dark:bg-slate-900 p-4 sm:p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm dark:shadow-2xl transition-colors">
+        <h1 className="text-lg sm:text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
           <span>📊</span> Laporan & Rekapitulasi Keuangan
         </h1>
-        <p className="text-xs text-slate-400">
+        <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
           Ringkasan akumulasi total penjualan, realisasi kas masuk (Paid), dan sisa piutang (Unpaid).
         </p>
       </div>
 
-      {/* Ringkasan Metrics / KPI Cards */}
-      {loading ? (
-        <div className="p-12 text-center text-slate-500 font-medium animate-pulse bg-slate-900 rounded-2xl border border-slate-800">
-          Memuat laporan keuangan...
+      {/* Metric Cards (Sinkron 100%) */}
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+        {/* Total Omzet */}
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 rounded-2xl shadow-sm dark:shadow-xl space-y-1 transition-colors">
+          <span className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+            Total Keseluruhan Omset
+          </span>
+          <div className="text-2xl font-black text-blue-600 dark:text-blue-400">
+            Rp {totalOmzet.toLocaleString('id-ID')}
+          </div>
+          <p className="text-[11px] text-slate-400">
+            Akumulasi nilai seluruh transaksi nota tercatat.
+          </p>
         </div>
-      ) : (
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-          {/* Total Omset */}
-          <div className="bg-slate-900 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-3 relative overflow-hidden">
-            <div className="absolute -right-2 -top-2 w-20 h-20 bg-blue-500/10 rounded-full blur-xl pointer-events-none" />
-            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-              Total Keseluruhan Omset
-            </span>
-            <div className="text-2xl sm:text-3xl font-black text-blue-400">
-              Rp {totalOmset.toLocaleString('id-ID')}
-            </div>
-            <p className="text-xs text-slate-500">Akumulasi nilai seluruh transaksi nota tercatat.</p>
-          </div>
 
-          {/* Kas Masuk (PAID) */}
-          <div className="bg-slate-900 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-3 relative overflow-hidden">
-            <div className="absolute -right-2 -top-2 w-20 h-20 bg-emerald-500/10 rounded-full blur-xl pointer-events-none" />
-            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-              Kas Masuk (PAID)
-            </span>
-            <div className="text-2xl sm:text-3xl font-black text-emerald-400">
-              Rp {totalPaid.toLocaleString('id-ID')}
-            </div>
-            <p className="text-xs text-slate-500">Total dana tunai yang sudah lunas diterima.</p>
+        {/* Realisasi Kas Masuk */}
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 rounded-2xl shadow-sm dark:shadow-xl space-y-1 transition-colors">
+          <span className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+            Kas Masuk (Paid)
+          </span>
+          <div className="text-2xl font-black text-emerald-600 dark:text-emerald-400">
+            Rp {totalPaidCash.toLocaleString('id-ID')}
           </div>
-
-          {/* Total Tagihan (UNPAID) */}
-          <div className="bg-slate-900 p-6 rounded-2xl border border-slate-800 shadow-xl space-y-3 relative overflow-hidden">
-            <div className="absolute -right-2 -top-2 w-20 h-20 bg-amber-500/10 rounded-full blur-xl pointer-events-none" />
-            <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-              Total Tagihan (UNPAID)
-            </span>
-            <div className="text-2xl sm:text-3xl font-black text-amber-400">
-              Rp {totalUnpaid.toLocaleString('id-ID')}
-            </div>
-            <p className="text-xs text-slate-500">Sisa piutang dagang yang belum dibayar toko.</p>
-          </div>
+          <p className="text-[11px] text-slate-400">
+            Total dana tunai & cicilan yang sudah lunas/diterima.
+          </p>
         </div>
-      )}
 
-      {/* Tabel 10 Transaksi Terakhir */}
-      <div className="bg-slate-900 rounded-2xl border border-slate-800 shadow-2xl p-6 space-y-4">
-        <h3 className="font-bold text-white text-base flex items-center gap-2">
-          <span>🕒</span> 10 Transaksi Terakhir
-        </h3>
-        
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[650px] text-left border-collapse text-sm">
-            <thead>
-              <tr className="bg-slate-950/80 border-b border-slate-800 text-xs font-bold text-slate-400 uppercase tracking-wider">
-                <th className="p-3.5">Toko / Pembeli</th>
-                <th className="p-3.5">Produk</th>
-                <th className="p-3.5 text-center">Jumlah</th>
-                <th className="p-3.5 text-right">Total Transaksi</th>
-                <th className="p-3.5 text-center">Status</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-800/60 text-slate-200">
-              {transactions.length === 0 ? (
-                <tr>
-                  <td colSpan={5} className="text-center py-8 text-slate-500">
-                    Belum ada riwayat transaksi.
-                  </td>
+        {/* Sisa Piutang */}
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 rounded-2xl shadow-sm dark:shadow-xl space-y-1 transition-colors">
+          <span className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
+            Total Tagihan (Unpaid)
+          </span>
+          <div className="text-2xl font-black text-amber-600 dark:text-amber-400">
+            Rp {totalPiutang.toLocaleString('id-ID')}
+          </div>
+          <p className="text-[11px] text-slate-400">
+            Sisa piutang dagang yang belum dibayar toko.
+          </p>
+        </div>
+      </div>
+
+      {/* Tabel Transaksi */}
+      <div className="bg-white dark:bg-slate-900 p-4 sm:p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm dark:shadow-2xl space-y-4 transition-colors">
+        <h2 className="text-sm font-bold text-slate-800 dark:text-slate-200 flex items-center gap-2">
+          <span>🕒</span> Transaksi Terakhir
+        </h2>
+
+        {loading ? (
+          <div className="text-center py-12 text-slate-400 dark:text-slate-500 font-medium animate-pulse">
+            Memuat laporan...
+          </div>
+        ) : (
+          <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800">
+            <table className="w-full min-w-[700px] text-left border-collapse">
+              <thead>
+                <tr className="border-b border-slate-200 dark:border-slate-800 text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider bg-slate-50 dark:bg-slate-950/80">
+                  <th className="p-3.5">Toko / Pembeli</th>
+                  <th className="p-3.5">Produk</th>
+                  <th className="p-3.5 text-right">Total Transaksi</th>
+                  <th className="p-3.5 text-center">Status</th>
                 </tr>
-              ) : (
-                transactions.slice(0, 10).map((tx) => {
-                  const displayStatus = formatStatus(tx.payment_status)
-                  const isPaid = displayStatus === 'PAID'
+              </thead>
+              <tbody className="divide-y divide-slate-200 dark:divide-slate-800/60 text-sm">
+                {transactions.length === 0 ? (
+                  <tr>
+                    <td colSpan={4} className="text-center py-12 text-slate-400">
+                      Belum ada transaksi.
+                    </td>
+                  </tr>
+                ) : (
+                  transactions.slice(0, 15).map((tx) => {
+                    const total = tx.total_price || 0
+                    const paid = tx.paid_amount || 0
+                    const remaining = total - paid
+                    
+                    const isPaid = tx.payment_status === 'PAID' || remaining <= 0
+                    const isPartial = tx.payment_status === 'PARTIAL' || (paid > 0 && remaining > 0)
 
-                  return (
-                    <tr key={tx.id} className="hover:bg-slate-800/40 transition">
-                      <td className="p-3.5 font-semibold text-slate-100">{tx.customer_name}</td>
-                      <td className="p-3.5 text-slate-300">{tx.product_name || '-'}</td>
-                      <td className="p-3.5 text-center text-slate-400 font-medium">
-                        {tx.qty} {tx.unit}
-                      </td>
-                      <td className="p-3.5 text-right font-bold text-slate-100">
-                        Rp {Number(tx.total_price || 0).toLocaleString('id-ID')}
-                      </td>
-                      <td className="p-3.5 text-center">
-                        <span className={`px-2.5 py-1 text-xs font-bold rounded-full border ${
-                          isPaid 
-                            ? 'bg-emerald-950/60 text-emerald-400 border-emerald-800/50' 
-                            : 'bg-amber-950/60 text-amber-400 border-amber-800/50'
-                        }`}>
-                          {displayStatus}
-                        </span>
-                      </td>
-                    </tr>
-                  )
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
+                    return (
+                      <tr key={tx.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition">
+                        <td className="p-3.5 font-semibold text-slate-800 dark:text-slate-200">
+                          {tx.customer_name}
+                        </td>
+                        <td className="p-3.5 text-slate-600 dark:text-slate-300 max-w-xs truncate" title={tx.product_name}>
+                          {tx.product_name || '-'}
+                        </td>
+                        <td className="p-3.5 text-right font-bold text-slate-900 dark:text-white">
+                          Rp {total.toLocaleString('id-ID')}
+                        </td>
+                        <td className="p-3.5 text-center whitespace-nowrap">
+                          <span className={`inline-block px-3 py-1 rounded-full text-xs font-semibold border ${
+                            isPaid 
+                              ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20' 
+                              : isPartial
+                              ? 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/20'
+                              : 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border-rose-500/20'
+                          }`}>
+                            {isPaid ? 'PAID' : isPartial ? 'PARTIAL' : 'UNPAID'}
+                          </span>
+                        </td>
+                      </tr>
+                    )
+                  })
+                )}
+              </tbody>
+            </table>
+          </div>
+        )}
       </div>
     </div>
   )

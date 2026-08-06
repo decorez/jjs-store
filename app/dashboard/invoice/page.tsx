@@ -1,435 +1,606 @@
 'use client'
 
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 import Link from 'next/link'
+import { useRouter } from 'next/navigation'
+
+interface Customer {
+  id: number
+  name: string
+  phone?: string
+  address?: string
+}
+
+interface InvoiceItem {
+  product_id: string | number
+  product_name: string
+  unit: 'Dus' | 'Pcs'
+  quantity: number
+  price: number
+}
+
+// Interface Toast Notifikasi
+interface ToastState {
+  message: string
+  type: 'error' | 'success' | 'warning'
+}
 
 export default function InvoicePage() {
-  const [stores, setStores] = useState<any[]>([])
-  const [products, setProducts] = useState<any[]>([])
-  
-  const [customerName, setCustomerName] = useState('')
-  const [showSuggestions, setShowSuggestions] = useState(false)
-  const wrapperRef = useRef<HTMLDivElement>(null)
+  const router = useRouter()
 
-  const [status, setStatus] = useState('PAID')
+  // Master Data State
+  const [customers, setCustomers] = useState<Customer[]>([])
+  const [productsList, setProductsList] = useState<any[]>([])
+  const [loadingData, setLoadingData] = useState(true)
+  const [submitting, setSubmitting] = useState(false)
 
+  // 🔔 Custom Toast State (Menggantikan Alert Browser)
+  const [toast, setToast] = useState<ToastState | null>(null)
+
+  // Helper untuk menampilkan Toast
+  const showToast = (message: string, type: 'error' | 'success' | 'warning' = 'error') => {
+    setToast({ message, type })
+    setTimeout(() => {
+      setToast(null)
+    }, 4000) // Toast otomatis hilang setelah 4 detik
+  }
+
+  // Form State
+  const [selectedCustomer, setSelectedCustomer] = useState('')
+  const [customCustomerName, setCustomCustomerName] = useState('')
   const [transactionDate, setTransactionDate] = useState(
     new Date().toISOString().split('T')[0]
   )
 
-  const [dueDate, setDueDate] = useState('')
-  
-  const [orderItems, setOrderItems] = useState([
-    { product_id: '', quantity: 1, unit: 'Dus', price: 0 }
+  // State Rincian Barang (Multi-Item)
+  const [items, setItems] = useState<InvoiceItem[]>([
+    { product_id: '', product_name: '', unit: 'Dus', quantity: 1, price: 0 }
   ])
-  
-  const [loading, setLoading] = useState(false)
 
+  // State Pembayaran
+  const [paidAmount, setPaidAmount] = useState<number | ''>(0)
+
+  // Helper Presisi Mengambil Harga Dus (selling_price_per_box)
+  const getBoxPrice = (p: any): number => {
+    if (!p) return 0
+    return Number(p.selling_price_per_box ?? p.harga_dus ?? 0)
+  }
+
+  // Helper Presisi Mengambil Harga Pcs (selling_price_per_bottle)
+  const getPcsPrice = (p: any): number => {
+    if (!p) return 0
+    return Number(p.selling_price_per_bottle ?? p.harga_pcs ?? 0)
+  }
+
+  // Helper Presisi Cek Izin Eceran (is_retail_allowed)
+  const canSellPcs = (p?: any): boolean => {
+    if (!p) return true
+    if (typeof p.is_retail_allowed === 'boolean') {
+      return p.is_retail_allowed
+    }
+    return getPcsPrice(p) > 0
+  }
+
+  // Fetch Master Data Toko & Produk
   useEffect(() => {
-    async function fetchData() {
-      const { data: storeData } = await supabase.from('stores').select('name')
-      if (storeData) {
-        setStores(storeData.map(s => s.name))
-      }
+    async function fetchMasterData() {
+      setLoadingData(true)
+      const [custRes, prodRes] = await Promise.all([
+        supabase.from('customers').select('*').order('name', { ascending: true }),
+        supabase.from('products').select('*').order('name', { ascending: true })
+      ])
 
-      const { data: prodData } = await supabase.from('products').select('*').order('name')
-      if (prodData) {
-        setProducts(prodData)
-      }
+      if (custRes.data) setCustomers(custRes.data)
+      if (prodRes.data) setProductsList(prodRes.data)
+      if (prodRes.error) console.error('Error load products:', prodRes.error.message)
+      setLoadingData(false)
     }
-    fetchData()
-
-    function handleClickOutside(event: MouseEvent) {
-      if (wrapperRef.current && !wrapperRef.current.contains(event.target as Node)) {
-        setShowSuggestions(false)
-      }
-    }
-    document.addEventListener('mousedown', handleClickOutside)
-    return () => document.removeEventListener('mousedown', handleClickOutside)
+    fetchMasterData()
   }, [])
 
-  const filteredStores = stores.filter(store => 
-    store.toLowerCase().includes(customerName.toLowerCase())
-  )
-
-  const addProductRow = () => {
-    setOrderItems([...orderItems, { product_id: '', quantity: 1, unit: 'Dus', price: 0 }])
+  // Handler Tambah Baris Barang
+  const handleAddItem = () => {
+    setItems([...items, { product_id: '', product_name: '', unit: 'Dus', quantity: 1, price: 0 }])
   }
 
-  const removeProductRow = (index: number) => {
-    if (orderItems.length === 1) return
-    const updated = orderItems.filter((_, i) => i !== index)
-    setOrderItems(updated)
+  // Handler Hapus Baris Barang
+  const handleRemoveItem = (index: number) => {
+    if (items.length === 1) {
+      showToast('Minimal harus ada 1 barang dalam nota!', 'warning')
+      return
+    }
+    setItems(items.filter((_, i) => i !== index))
   }
 
-  const handleItemChange = (index: number, field: 'product_id' | 'quantity' | 'unit' | 'price', value: any) => {
-    const updated = [...orderItems]
+  // Handler Perubahan Item Barang
+  const handleItemChange = (index: number, field: keyof InvoiceItem, value: any) => {
+    const updatedItems = [...items]
+    const currentItem = updatedItems[index]
 
     if (field === 'product_id') {
-      updated[index].product_id = value
-      const selectedProd = products.find(p => String(p.id) === String(value))
-      
-      if (selectedProd) {
-        if (selectedProd.is_retail_allowed === false) {
-          updated[index].unit = 'Dus'
-          updated[index].price = Number(selectedProd.selling_price_per_box) || 0
-        } else {
-          if (updated[index].unit === 'Dus') {
-            updated[index].price = Number(selectedProd.selling_price_per_box) || 0
-          } else {
-            updated[index].price = Number(selectedProd.selling_price_per_bottle) || 0
-          }
+      if (value === 'MANUAL') {
+        updatedItems[index] = {
+          ...currentItem,
+          product_id: 'MANUAL',
+          product_name: '',
+          unit: 'Dus',
+          price: 0
         }
       } else {
-        updated[index].price = 0
-      }
-    } else if (field === 'unit') {
-      const selectedProd = products.find(p => String(p.id) === String(updated[index].product_id))
-      
-      if (value === 'Pcs' && selectedProd && selectedProd.is_retail_allowed === false) {
-        alert('Produk ini hanya boleh dijual per Dus!')
-        return
-      }
+        const foundProd = productsList.find((p) => String(p.id) === String(value))
+        if (foundProd) {
+          const allowsPcs = canSellPcs(foundProd)
+          const targetUnit = allowsPcs ? currentItem.unit : 'Dus'
+          const autoPrice = targetUnit === 'Dus' ? getBoxPrice(foundProd) : getPcsPrice(foundProd)
 
-      updated[index].unit = value
-      if (selectedProd) {
-        if (value === 'Dus') {
-          updated[index].price = Number(selectedProd.selling_price_per_box) || 0
-        } else {
-          updated[index].price = Number(selectedProd.selling_price_per_bottle) || 0
+          updatedItems[index] = {
+            ...currentItem,
+            product_id: value,
+            product_name: foundProd.name,
+            unit: targetUnit,
+            price: autoPrice
+          }
         }
       }
-    } else if (field === 'quantity') {
-      updated[index].quantity = value === '' ? '' : value
-    } else if (field === 'price') {
-      updated[index].price = value === '' ? '' : value
+    } else if (field === 'unit') {
+      const foundProd = productsList.find((p) => String(p.id) === String(currentItem.product_id))
+      let autoPrice = currentItem.price
+
+      if (foundProd) {
+        autoPrice = value === 'Dus' ? getBoxPrice(foundProd) : getPcsPrice(foundProd)
+      }
+
+      updatedItems[index] = {
+        ...currentItem,
+        unit: value,
+        price: autoPrice
+      }
+    } else {
+      updatedItems[index] = {
+        ...currentItem,
+        [field]: value
+      }
     }
 
-    setOrderItems(updated)
+    setItems(updatedItems)
   }
 
-  const grandTotal = orderItems.reduce((sum, item) => {
-    const qty = item.quantity === '' ? 0 : Number(item.quantity)
-    const price = item.price === '' ? 0 : Number(item.price)
-    return sum + (qty * price)
+  // Hitung Total Nota Otomatis
+  const totalPrice = items.reduce((sum, item) => {
+    const qty = Number(item.quantity) || 0
+    const prc = Number(item.price) || 0
+    return sum + (qty * prc)
   }, 0)
 
-  async function handleSubmit(e: React.FormEvent) {
+  const paidNum = Number(paidAmount) || 0
+  const remainingNum = Math.max(0, totalPrice - paidNum)
+
+  // Submit Handler dengan Pemotongan Stok
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!customerName.trim() || orderItems.some(item => !item.product_id)) {
-      alert('Mohon lengkapi nama pembeli dan pilih produk dengan benar!')
+
+    // 🛑 Validasi Custom Toko / Pelanggan
+    if (!selectedCustomer) {
+      showToast('⚠️ Silakan pilih Toko / Pelanggan terlebih dahulu!', 'warning')
       return
     }
 
-    setLoading(true)
-    const transactionTimestamp = new Date().toISOString()
+    const finalCustomerName =
+      selectedCustomer === 'OTHER'
+        ? customCustomerName.trim()
+        : selectedCustomer.trim()
 
-    const productSummaryList = orderItems.map(item => {
-      const selectedProd = products.find(p => String(p.id) === String(item.product_id))
-      const name = selectedProd ? selectedProd.name : 'Unknown Product'
-      const qty = item.quantity === '' ? 1 : Number(item.quantity)
-      return `${name} (${qty} ${item.unit})`
-    })
+    if (!finalCustomerName) {
+      showToast('⚠️ Silakan isi nama toko/pelanggan baru!', 'warning')
+      return
+    }
 
-    const combinedProductName = productSummaryList.join(', ')
-    const totalJenis = orderItems.length
+    // Validasi Item Barang
+    const validItems = items.filter(item => item.product_name.trim() !== '' && item.quantity > 0)
+    if (validItems.length === 0) {
+      showToast('⚠️ Pilih minimal 1 barang dengan jumlah yang valid!', 'warning')
+      return
+    }
 
-    const initialPaid = status === 'PAID' ? grandTotal : 0
+    // 🛑 Validasi Kecukupan Stok Sebelum Disimpan
+    for (const item of validItems) {
+      if (item.product_id === 'MANUAL') continue
 
+      const prod = productsList.find((p) => String(p.id) === String(item.product_id))
+      if (prod) {
+        if (item.unit === 'Dus') {
+          const availBox = prod.box_stock || 0
+          if (item.quantity > availBox) {
+            showToast(`❌ Stok ${prod.name} tidak cukup! Tersedia: ${availBox} Dus, Diminta: ${item.quantity} Dus.`, 'error')
+            return
+          }
+        } else if (item.unit === 'Pcs') {
+          const availPcs = (prod.bottle_stock || 0) + ((prod.box_stock || 0) * (prod.units_per_box || 1))
+          if (item.quantity > availPcs) {
+            showToast(`❌ Stok ${prod.name} (Pcs) tidak cukup! Tersedia: ${availPcs} Pcs, Diminta: ${item.quantity} Pcs.`, 'error')
+            return
+          }
+        }
+      }
+    }
+
+    setSubmitting(true)
+
+    // Format Ringkasan Deskripsi Produk
+    const productSummary = validItems
+      .map(item => `${item.quantity} ${item.unit} ${item.product_name}`)
+      .join(', ')
+
+    // Status Pembayaran
+    let paymentStatus = 'UNPAID'
+    if (paidNum >= totalPrice && totalPrice > 0) {
+      paymentStatus = 'PAID'
+    } else if (paidNum > 0 && paidNum < totalPrice) {
+      paymentStatus = 'PARTIAL'
+    }
+
+    // Riwayat DP / Pembayaran Awal
+    const initialHistory =
+      paidNum > 0
+        ? [
+            {
+              amount: paidNum,
+              date: new Date().toISOString(),
+              sales_name: 'Kasir (Pembayaran Awal)',
+            },
+          ]
+        : []
+
+    // 📝 Simpan Transaksi Ke Database
     const { error: txError } = await supabase.from('transactions').insert([
       {
-        customer_name: customerName.trim(),
-        product_name: combinedProductName,
-        qty: totalJenis,
-        unit: 'Jenis',
-        price_per_unit: grandTotal,
-        total_price: grandTotal,
-        paid_amount: initialPaid,
-        payment_status: status,
+        customer_name: finalCustomerName,
         transaction_date: transactionDate,
-        due_date: dueDate || null,
-        created_at: transactionTimestamp,
-      }
+        product_name: productSummary,
+        total_price: totalPrice,
+        paid_amount: paidNum,
+        payment_status: paymentStatus,
+        payment_history: initialHistory,
+        is_carried: false,
+      },
     ])
 
     if (txError) {
-      alert('Gagal menyimpan transaksi: ' + txError.message)
-      setLoading(false)
+      setSubmitting(false)
+      showToast('Gagal membuat nota: ' + txError.message, 'error')
       return
     }
 
-    for (const item of orderItems) {
-      const selectedProd = products.find(p => String(p.id) === String(item.product_id))
-      if (selectedProd) {
-        const finalQty = item.quantity === '' ? 1 : Number(item.quantity)
-        let currentBox = Number(selectedProd.box_stock) || 0
-        let currentBottle = Number(selectedProd.bottle_stock) || 0
-        const unitsPerBox = Number(selectedProd.units_per_box) || 12
+    // 📦 Potong Stok Barang di Tabel `products`
+    for (const item of validItems) {
+      if (item.product_id === 'MANUAL') continue
 
-        if (item.unit === 'Dus') {
-          currentBox = Math.max(0, currentBox - finalQty)
+      const prod = productsList.find((p) => String(p.id) === String(item.product_id))
+      if (!prod) continue
+
+      if (item.unit === 'Dus') {
+        const newBoxStock = Math.max(0, (prod.box_stock || 0) - item.quantity)
+        await supabase
+          .from('products')
+          .update({ box_stock: newBoxStock })
+          .eq('id', prod.id)
+      } else if (item.unit === 'Pcs') {
+        let currentBottle = prod.bottle_stock || 0
+        let currentBox = prod.box_stock || 0
+        const unitsPerBox = prod.units_per_box || 1
+
+        if (currentBottle >= item.quantity) {
+          currentBottle -= item.quantity
         } else {
-          let totalPcs = (currentBox * unitsPerBox) + currentBottle - finalQty
-          if (totalPcs < 0) totalPcs = 0
-          currentBox = Math.floor(totalPcs / unitsPerBox)
-          currentBottle = totalPcs % unitsPerBox
+          const neededPcs = item.quantity - currentBottle
+          const boxesToBreak = Math.ceil(neededPcs / unitsPerBox)
+          currentBox = Math.max(0, currentBox - boxesToBreak)
+          currentBottle = (currentBottle + (boxesToBreak * unitsPerBox)) - item.quantity
         }
 
         await supabase
           .from('products')
-          .update({ 
+          .update({
             box_stock: currentBox,
-            bottle_stock: currentBottle 
+            bottle_stock: currentBottle,
           })
-          .eq('id', selectedProd.id)
+          .eq('id', prod.id)
       }
     }
 
-    setLoading(false)
-    alert(`Nota berhasil disimpan & stok dipotong! Total: Rp ${grandTotal.toLocaleString('id-ID')}`)
+    setSubmitting(false)
+    showToast('✅ Nota transaksi berhasil disimpan & stok otomatis berkurang!', 'success')
     
-    setCustomerName('')
-    setDueDate('')
-    setOrderItems([{ product_id: '', quantity: 1, unit: 'Dus', price: 0 }])
-
-    const { data: prodData } = await supabase.from('products').select('*').order('name')
-    if (prodData) setProducts(prodData)
+    // Redirect ke riwayat penjualan setelah singkat
+    setTimeout(() => {
+      router.push('/dashboard/sales')
+    }, 1500)
   }
 
   return (
-    <div className="p-6 max-w-4xl mx-auto space-y-6 text-slate-100">
-      {/* Tombol Navigasi Kembali */}
+    <div className="p-3.5 sm:p-6 max-w-5xl mx-auto space-y-6 text-slate-900 dark:text-slate-100 relative">
+      
+      {/* 🔔 CUSTOM TOAST NOTIFICATION COMPONENT */}
+      {toast && (
+        <div className="fixed top-5 right-5 z-50 max-w-md animate-bounce-short">
+          <div
+            className={`flex items-start gap-3 p-4 rounded-2xl shadow-2xl border backdrop-blur-md transition-all ${
+              toast.type === 'error'
+                ? 'bg-rose-950/90 border-rose-500/50 text-rose-200'
+                : toast.type === 'warning'
+                ? 'bg-amber-950/90 border-amber-500/50 text-amber-200'
+                : 'bg-emerald-950/90 border-emerald-500/50 text-emerald-200'
+            }`}
+          >
+            <div className="text-xl">
+              {toast.type === 'error' ? '❌' : toast.type === 'warning' ? '⚠️' : '✅'}
+            </div>
+            <div className="flex-1 text-xs sm:text-sm font-semibold leading-relaxed">
+              {toast.message}
+            </div>
+            <button
+              onClick={() => setToast(null)}
+              className="text-slate-400 hover:text-white font-bold text-xs"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* Header */}
       <div>
-        <Link 
+        <Link
           href="/dashboard"
-          className="inline-flex items-center text-xs font-semibold text-slate-400 hover:text-white transition gap-1"
+          className="inline-flex items-center text-xs sm:text-sm font-semibold text-slate-500 hover:text-blue-600 transition gap-1 mb-1"
         >
           ← Kembali ke Dashboard
         </Link>
+        <h1 className="text-xl sm:text-2xl font-black flex items-center gap-2">
+          <span>📝</span> Input Nota / Faktur Penjualan
+        </h1>
+        <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">
+          Pilih toko, masukkan rincian barang dari katalog, dan hitung total otomatis.
+        </p>
       </div>
 
-      {/* Card Utama Form */}
-      <div className="bg-slate-900 p-6 sm:p-8 rounded-2xl border border-slate-800 shadow-2xl space-y-6">
-        <div className="border-b border-slate-800/80 pb-4">
-          <h1 className="text-xl font-bold text-white flex items-center gap-2">
-            <span>➕</span> Input Pesanan Multi-Produk
-          </h1>
-          <p className="text-xs text-slate-400 mt-1">
-            Harga otomatis terisi berdasarkan jenis produk dan satuan (Dus/Pcs).
-          </p>
-        </div>
+      {/* Form dengan `noValidate` untuk Mematikan Tooltip Browser */}
+      <form onSubmit={handleSubmit} noValidate className="space-y-6">
+        {/* Card 1: Informasi Toko & Tanggal */}
+        <div className="bg-white dark:bg-slate-900 p-5 sm:p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
+          <h2 className="text-sm font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+            <span>🏪</span> Informasi Toko & Tanggal
+          </h2>
 
-        <form onSubmit={handleSubmit} className="space-y-6">
-          {/* Input Nama Toko + Autocomplete */}
-          <div className="relative" ref={wrapperRef}>
-            <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1.5">
-              Nama Pembeli / Toko / Tetangga
-            </label>
-            <input 
-              type="text" 
-              placeholder="Ketik nama toko..."
-              value={customerName}
-              onChange={(e) => {
-                setCustomerName(e.target.value)
-                setShowSuggestions(true)
-              }}
-              onFocus={() => setShowSuggestions(true)}
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-white placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition"
-              required
-            />
-            
-            {showSuggestions && filteredStores.length > 0 && (
-              <ul className="absolute z-30 left-0 right-0 bg-slate-900 border border-slate-800 rounded-xl mt-1 shadow-2xl max-h-48 overflow-y-auto divide-y divide-slate-800/60">
-                {filteredStores.map((store, idx) => (
-                  <li 
-                    key={idx}
-                    onClick={() => {
-                      setCustomerName(store)
-                      setShowSuggestions(false)
-                    }}
-                    className="px-4 py-2.5 text-sm hover:bg-slate-800/80 cursor-pointer text-slate-200 flex items-center justify-between transition"
-                  >
-                    <span className="flex items-center gap-2">🏪 {store}</span>
-                    <span className="text-xs text-blue-400 font-medium bg-blue-500/10 px-2 py-0.5 rounded border border-blue-500/20">Pilih Toko</span>
-                  </li>
-                ))}
-              </ul>
-            )}
-          </div>
-
-          {/* Input Tanggal Transaksi */}
-          <div className="space-y-1.5">
-            <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider">
-              Tanggal Nota / Transaksi
-            </label>
-            <input 
-              type="date"
-              value={transactionDate}
-              onChange={(e) => setTransactionDate(e.target.value)}
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition [color-scheme:dark]"
-            />
-          </div>
-
-          {/* Baris Daftar Produk */}
-          <div className="space-y-3">
-            <div className="flex justify-between items-center">
-              <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider">
-                Daftar Produk Dipesan
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="text-xs font-bold text-slate-500 block mb-1.5">
+                Tanggal Transaksi <span className="text-rose-500">*</span>
               </label>
-              <button 
-                type="button"
-                onClick={addProductRow}
-                className="text-xs bg-emerald-500/10 text-emerald-400 font-semibold px-3 py-1.5 rounded-lg border border-emerald-500/20 hover:bg-emerald-500/20 transition flex items-center gap-1"
-              >
-                <span>+</span> Tambah Jenis Produk Lain
-              </button>
+              <input
+                type="date"
+                value={transactionDate}
+                onChange={(e) => setTransactionDate(e.target.value)}
+                className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-sm font-semibold focus:outline-none focus:border-blue-500"
+              />
             </div>
 
-            {orderItems.map((item, index) => {
-              const selectedProd = products.find(p => String(p.id) === String(item.product_id))
-              const isRetailAllowed = selectedProd ? selectedProd.is_retail_allowed !== false : true
+            <div>
+              <label className="text-xs font-bold text-slate-500 block mb-1.5">
+                Pilih Toko / Pelanggan <span className="text-rose-500">*</span>
+              </label>
+              {loadingData ? (
+                <div className="text-xs text-slate-400 py-2.5">Memuat data toko...</div>
+              ) : (
+                <select
+                  value={selectedCustomer}
+                  onChange={(e) => setSelectedCustomer(e.target.value)}
+                  className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-sm font-semibold focus:outline-none focus:border-blue-500"
+                >
+                  <option value="">-- Pilih Toko Terdaftar --</option>
+                  {customers.map((c) => (
+                    <option key={c.id} value={c.name}>
+                      🏪 {c.name} {c.phone ? `(${c.phone})` : ''}
+                    </option>
+                  ))}
+                  <option value="OTHER">➕ + Input Manual / Toko Baru</option>
+                </select>
+              )}
+            </div>
+          </div>
+
+          {selectedCustomer === 'OTHER' && (
+            <div className="bg-blue-50/50 dark:bg-blue-950/30 p-4 rounded-xl border border-blue-200 dark:border-blue-900/50">
+              <label className="text-xs font-bold text-blue-600 dark:text-blue-400 block mb-1">
+                Nama Toko Baru (Input Manual)
+              </label>
+              <input
+                type="text"
+                placeholder="Ketik nama toko..."
+                value={customCustomerName}
+                onChange={(e) => setCustomCustomerName(e.target.value)}
+                className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-sm focus:outline-none focus:border-blue-500"
+              />
+            </div>
+          )}
+        </div>
+
+        {/* Card 2: Rincian Barang (Multi-Item) */}
+        <div className="bg-white dark:bg-slate-900 p-5 sm:p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
+          <div className="flex items-center justify-between">
+            <h2 className="text-sm font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+              <span>📦</span> Daftar Barang Belanjaan
+            </h2>
+            <button
+              type="button"
+              onClick={handleAddItem}
+              className="text-xs bg-blue-50 dark:bg-blue-950 text-blue-600 dark:text-blue-400 font-bold px-3 py-1.5 rounded-lg border border-blue-200 dark:border-blue-900 hover:bg-blue-100 transition"
+            >
+              ➕ Tambah Barang
+            </button>
+          </div>
+
+          <div className="space-y-3">
+            {items.map((item, index) => {
+              const subtotal = (Number(item.quantity) || 0) * (Number(item.price) || 0)
+              const selectedProd = productsList.find((p) => String(p.id) === String(item.product_id))
+              const allowsPcs = canSellPcs(selectedProd)
 
               return (
-                <div key={index} className="flex flex-col sm:flex-row items-center gap-3 p-3.5 bg-slate-950/60 rounded-xl border border-slate-800/80">
-                  {/* Select Produk */}
-                  <div className="w-full sm:flex-1">
-                    <select 
+                <div
+                  key={index}
+                  className="bg-slate-50 dark:bg-slate-950/60 p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 grid grid-cols-1 md:grid-cols-12 gap-3 items-center"
+                >
+                  {/* Select Produk Master / Custom */}
+                  <div className="md:col-span-4 space-y-1">
+                    <label className="text-[10px] font-bold text-slate-400 block md:hidden">
+                      Produk #{index + 1}
+                    </label>
+                    <select
                       value={item.product_id}
                       onChange={(e) => handleItemChange(index, 'product_id', e.target.value)}
-                      className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-sm text-white focus:outline-none focus:border-blue-500"
-                      required
+                      className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-3 py-2 text-xs font-semibold focus:outline-none focus:border-blue-500"
                     >
-                      <option value="" className="bg-slate-900 text-slate-400">-- Pilih Produk --</option>
-                      {products.map((p) => {
-                        const bBox = p.box_stock || 0
-                        const bBottle = p.bottle_stock || 0
-                        const limit = p.units_per_box || 12
-                        const totalPcs = (bBox * limit) + bBottle
-                        const finalBox = Math.floor(totalPcs / limit)
-                        const finalBottle = totalPcs % limit
-
-                        let stockText = 'Habis'
-                        if (finalBox > 0 && finalBottle === 0) stockText = `${finalBox} Dus`
-                        else if (finalBox === 0 && finalBottle > 0) stockText = `${finalBottle} Pcs`
-                        else if (finalBox > 0 && finalBottle > 0) stockText = `${finalBox} Dus ${finalBottle} Pcs`
-
+                      <option value="">-- Pilih Barang dari Katalog --</option>
+                      {productsList.map((p) => {
                         return (
-                          <option key={p.id} value={p.id} className="bg-slate-900 text-white">
-                            {p.name} (Stok: {stockText}) {p.is_retail_allowed === false ? '- Grosir' : ''}
+                          <option key={p.id} value={p.id}>
+                            📦 {p.name} (Stok: {p.box_stock || 0} Dus)
                           </option>
                         )
                       })}
+                      <option value="MANUAL">✍️ Input Nama Barang Custom</option>
                     </select>
+
+                    {item.product_id === 'MANUAL' && (
+                      <input
+                        type="text"
+                        placeholder="Nama barang custom..."
+                        value={item.product_name}
+                        onChange={(e) => handleItemChange(index, 'product_name', e.target.value)}
+                        className="w-full mt-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-blue-500"
+                      />
+                    )}
                   </div>
 
-                  {/* Qty Input */}
-                  <div className="w-full sm:w-24">
-                    <input 
-                      type="number" 
-                      min="1"
-                      placeholder="Jumlah"
-                      value={item.quantity}
-                      onChange={(e) => handleItemChange(index, 'quantity', e.target.value)}
-                      className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-sm text-white text-center focus:outline-none focus:border-blue-500"
-                      required
-                    />
-                  </div>
-
-                  {/* Unit Select */}
-                  <div className="w-full sm:w-32">
+                  {/* Satuan (Dus / Pcs) */}
+                  <div className="md:col-span-2">
+                    <label className="text-[10px] font-bold text-slate-400 block mb-1">Satuan</label>
                     <select
                       value={item.unit}
+                      disabled={!allowsPcs && item.product_id !== 'MANUAL'}
                       onChange={(e) => handleItemChange(index, 'unit', e.target.value)}
-                      className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-sm text-white focus:outline-none font-medium focus:border-blue-500"
+                      className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-2 py-2 text-xs font-semibold focus:outline-none focus:border-blue-500 disabled:opacity-60 disabled:bg-slate-100 dark:disabled:bg-slate-800 disabled:cursor-not-allowed"
                     >
-                      <option value="Dus" className="bg-slate-900 text-white">Dus</option>
-                      {isRetailAllowed && <option value="Pcs" className="bg-slate-900 text-white">Pcs (Eceran)</option>}
+                      <option value="Dus">📦 Dus</option>
+                      {allowsPcs && <option value="Pcs">🥤 Pcs</option>}
                     </select>
                   </div>
 
-                  {/* Price Input */}
-                  <div className="w-full sm:w-36">
-                    <input 
-                      type="number" 
-                      placeholder="Harga Satuan"
-                      value={item.price}
-                      onChange={(e) => handleItemChange(index, 'price', e.target.value)}
-                      className="w-full bg-slate-900 border border-slate-800 rounded-lg px-3 py-2 text-sm text-emerald-400 font-bold text-right focus:outline-none focus:border-blue-500"
-                      required
+                  {/* Quantity */}
+                  <div className="md:col-span-1">
+                    <label className="text-[10px] font-bold text-slate-400 block mb-1">Qty</label>
+                    <input
+                      type="number"
+                      min="1"
+                      value={item.quantity}
+                      onChange={(e) => handleItemChange(index, 'quantity', Number(e.target.value))}
+                      className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-2 py-2 text-xs font-bold text-center focus:outline-none focus:border-blue-500"
                     />
                   </div>
 
-                  {/* Hapus Baris */}
-                  {orderItems.length > 1 && (
-                    <button 
+                  {/* Harga Satuan */}
+                  <div className="md:col-span-2">
+                    <label className="text-[10px] font-bold text-slate-400 block mb-1">Harga (Rp)</label>
+                    <input
+                      type="number"
+                      min="0"
+                      value={item.price}
+                      onChange={(e) => handleItemChange(index, 'price', Number(e.target.value))}
+                      className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-2.5 py-2 text-xs font-bold text-right focus:outline-none focus:border-blue-500"
+                    />
+                  </div>
+
+                  {/* Subtotal */}
+                  <div className="md:col-span-2 text-right">
+                    <span className="text-[10px] font-bold text-slate-400 block mb-1">Subtotal</span>
+                    <span className="text-xs font-black text-blue-600 dark:text-blue-400">
+                      Rp {subtotal.toLocaleString('id-ID')}
+                    </span>
+                  </div>
+
+                  {/* Tombol Hapus */}
+                  <div className="md:col-span-1 text-center">
+                    <button
                       type="button"
-                      onClick={() => removeProductRow(index)}
-                      className="p-2 text-rose-400 hover:bg-rose-500/10 rounded-lg transition"
-                      title="Hapus baris ini"
+                      onClick={() => handleRemoveItem(index)}
+                      className="text-rose-500 hover:text-rose-700 text-xs p-1 font-bold"
+                      title="Hapus Barang Ini"
                     >
                       ✕
                     </button>
-                  )}
+                  </div>
                 </div>
               )
             })}
           </div>
+        </div>
 
-          {/* Status Pembayaran & Total Tagihan */}
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-4 border-t border-slate-800">
+        {/* Card 3: Pembayaran & Ringkasan Total */}
+        <div className="bg-white dark:bg-slate-900 p-5 sm:p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
+          <h2 className="text-sm font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
+            <span>💳</span> Ringkasan Pembayaran
+          </h2>
+
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div>
-              <label className="block text-xs font-bold text-slate-400 uppercase tracking-wider mb-1.5">
-                Status Pembayaran
+              <label className="text-xs font-bold text-slate-500 block mb-1.5">
+                Bayar Tunai / Uang Muka DP (Rp)
               </label>
-              <select 
-                value={status}
-                onChange={(e) => setStatus(e.target.value)}
-                className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-blue-500"
-              >
-                <option value="PAID" className="bg-slate-900 text-white">PAID (Lunas)</option>
-                <option value="UNPAID" className="bg-slate-900 text-white">UNPAID (Belum Bayar / Tempo)</option>
-              </select>
+              <input
+                type="number"
+                min="0"
+                placeholder="0"
+                value={paidAmount}
+                onChange={(e) => setPaidAmount(e.target.value ? Number(e.target.value) : '')}
+                className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-base font-bold text-emerald-600 focus:outline-none focus:border-blue-500"
+              />
             </div>
 
-            <div className="flex flex-col justify-end items-end p-3.5 bg-slate-950/60 border border-slate-800/80 rounded-xl space-y-0.5">
-              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-                Total Tagihan Keseluruhan
-              </span>
-              <span className="text-2xl font-black text-blue-400">
-                Rp {grandTotal.toLocaleString('id-ID')}
-              </span>
+            <div className="bg-slate-50 dark:bg-slate-950 p-4 rounded-xl border border-slate-200 dark:border-slate-800 flex flex-col justify-center space-y-1">
+              <div className="flex justify-between items-center text-xs">
+                <span className="text-slate-400 font-semibold">Total Tagihan Nota:</span>
+                <span className="text-base font-black text-blue-600">
+                  Rp {totalPrice.toLocaleString('id-ID')}
+                </span>
+              </div>
+              <div className="flex justify-between items-center text-xs">
+                <span className="text-slate-400 font-semibold">Sisa Piutang Toko:</span>
+                <span className={`text-sm font-black ${remainingNum > 0 ? 'text-rose-500' : 'text-emerald-500'}`}>
+                  Rp {remainingNum.toLocaleString('id-ID')}
+                </span>
+              </div>
             </div>
           </div>
 
-          {/* Input Jatuh Tempo (Jika Tempo) */}
-          <div className="bg-amber-500/10 border border-amber-500/20 p-4 rounded-xl space-y-1.5">
-            <label className="block text-xs font-bold text-amber-400 uppercase tracking-wider">
-              Tanggal Jatuh Tempo (Tagihan Sales)
-            </label>
-            <input 
-              type="date"
-              value={dueDate}
-              onChange={(e) => setDueDate(e.target.value)}
-              className="w-full bg-slate-950 border border-slate-800 rounded-xl px-4 py-2.5 text-sm text-white focus:outline-none focus:border-amber-500 [color-scheme:dark]"
-            />
-            <p className="text-[11px] text-amber-300/80">
-              Atur tanggal kapan sales harus menagih nota ini ke toko.
-            </p>
-          </div>
-
-          {/* Tombol Submit */}
-          <div className="pt-2">
-            <button 
-              type="submit" 
-              disabled={loading}
-              className="w-full bg-blue-600 hover:bg-blue-500 text-white font-extrabold py-3.5 rounded-xl shadow-lg shadow-blue-600/30 transition transform active:scale-98 disabled:opacity-50 text-sm tracking-wide"
+          <div className="flex items-center justify-end gap-3 pt-3">
+            <Link
+              href="/dashboard"
+              className="px-5 py-2.5 rounded-xl text-xs font-semibold text-slate-400 hover:text-slate-600 dark:hover:text-white transition"
             >
-              {loading ? 'Menyimpan...' : 'Simpan Nota & Potong Stok 🚀'}
+              Batal
+            </Link>
+            <button
+              type="submit"
+              disabled={submitting}
+              className="bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs sm:text-sm px-6 py-2.5 rounded-xl shadow-md transition disabled:opacity-50"
+            >
+              {submitting ? 'Menyimpan & Memotong Stok...' : '💾 Simpan & Terbitkan Nota'}
             </button>
           </div>
-        </form>
-      </div>
+        </div>
+      </form>
     </div>
   )
 }

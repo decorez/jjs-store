@@ -1,235 +1,255 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 import Link from 'next/link'
 
+interface Customer {
+  id: number
+  name: string
+}
+
+interface Transaction {
+  id: number
+  customer_name: string
+  total_price: number
+  paid_amount: number
+}
+
 export default function DashboardPage() {
-  const [stats, setStats] = useState({
-    totalOmzet: 0,
-    totalPiutang: 0,
-    notaAktif: 0,
-    stokMenipis: 0,
-  })
-  const [recentTx, setRecentTx] = useState<any[]>([])
+  const [customersCount, setCustomersCount] = useState<number>(0)
+  const [delinquentCount, setDelinquentCount] = useState<number>(0)
+  const [totalOmzet, setTotalOmzet] = useState<number>(0)
+  const [totalPiutang, setTotalPiutang] = useState<number>(0)
   const [loading, setLoading] = useState(true)
 
   useEffect(() => {
-    async function loadDashboardData() {
+    async function fetchDashboardSummary() {
       setLoading(true)
 
-      // Fetch Transaksi
-      const { data: transactions } = await supabase
-        .from('transactions')
-        .select('*')
-        .order('created_at', { ascending: false })
+      const [custRes, txRes] = await Promise.all([
+        supabase.from('customers').select('id, name'),
+        supabase.from('transactions').select('id, customer_name, total_price, paid_amount')
+      ])
 
-      // Fetch Produk
-      const { data: products } = await supabase.from('products').select('*')
+      const customersList: Customer[] = custRes.data || []
+      const txList: Transaction[] = txRes.data || []
 
-      if (transactions) {
-        // Hitung Omzet
-        const omzet = transactions.reduce((sum, tx) => sum + (Number(tx.total_price) || 0), 0)
+      // 1. Total Toko
+      setCustomersCount(customersList.length)
 
-        // Hitung Sisa Piutang (Belum Lunas)
-        const piutang = transactions
-          .filter((tx) => tx.payment_status !== 'PAID')
-          .reduce((sum, tx) => sum + ((Number(tx.total_price) || 0) - (Number(tx.paid_amount) || 0)), 0)
+      // 2. Hitung Omzet & Piutang Keseluruhan
+      let omzet = 0
+      let kasMasuk = 0
+      txList.forEach((tx) => {
+        omzet += Number(tx.total_price) || 0
+        kasMasuk += Number(tx.paid_amount) || 0
+      })
+      setTotalOmzet(omzet)
+      setTotalPiutang(omzet - kasMasuk)
 
-        const activeInvoices = transactions.filter((tx) => tx.payment_status !== 'PAID').length
-
-        setStats((prev) => ({
-          ...prev,
-          totalOmzet: omzet,
-          totalPiutang: piutang,
-          notaAktif: activeInvoices,
-        }))
-
-        setRecentTx(transactions.slice(0, 5))
-      }
-
-      if (products) {
-        const lowStockCount = products.filter((p) => (Number(p.box_stock) || 0) < 5).length
-        setStats((prev) => ({ ...prev, stokMenipis: lowStockCount }))
+      // 3. Hitung Jumlah Toko yang Memiliki Tunggakan (Sisa Piutang > 0)
+      if (customersList.length > 0 && txList.length > 0) {
+        let delinquent = 0
+        customersList.forEach((cust) => {
+          const custTxs = txList.filter(
+            (tx) => tx.customer_name?.toLowerCase().trim() === cust.name.toLowerCase().trim()
+          )
+          const belanja = custTxs.reduce((sum, tx) => sum + (Number(tx.total_price) || 0), 0)
+          const bayar = custTxs.reduce((sum, tx) => sum + (Number(tx.paid_amount) || 0), 0)
+          if (belanja - bayar > 0) {
+            delinquent++
+          }
+        })
+        setDelinquentCount(delinquent)
       }
 
       setLoading(false)
     }
 
-    loadDashboardData()
+    fetchDashboardSummary()
   }, [])
 
   return (
-    <div className="min-h-screen w-full bg-slate-950 text-slate-100">
-      {/* Wrapper DALAM */}
-      <div className="max-w-7xl mx-auto p-4 sm:p-6 space-y-8">
-        {/* Header Welcoming */}
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 border-b border-slate-800/80 pb-6">
+    <div className="p-3.5 sm:p-6 max-w-7xl mx-auto space-y-6 text-slate-900 dark:text-slate-100">
+      {/* Header Dashboard */}
+      <div>
+        <h1 className="text-xl sm:text-2xl font-black text-slate-900 dark:text-white flex items-center gap-2">
+          <span>🚀</span> Dashboard Sistem
+        </h1>
+        <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-1">
+          Ringkasan operasional toko, rekapitulasi piutang, dan manajemen pelanggan.
+        </p>
+      </div>
+
+      {/* Ringkasan Metric Quick-View */}
+      <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
+        {/* Metric 1: Total Omzet */}
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl shadow-sm">
+          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+            Total Omzet
+          </span>
+          <span className="text-lg sm:text-xl font-black text-blue-600 dark:text-blue-400 block mt-1">
+            {loading ? '...' : `Rp ${totalOmzet.toLocaleString('id-ID')}`}
+          </span>
+        </div>
+
+        {/* Metric 2: Sisa Piutang */}
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl shadow-sm">
+          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+            Sisa Piutang Toko
+          </span>
+          <span className="text-lg sm:text-xl font-black text-amber-600 dark:text-amber-400 block mt-1">
+            {loading ? '...' : `Rp ${totalPiutang.toLocaleString('id-ID')}`}
+          </span>
+        </div>
+
+        {/* Metric 3: Total Toko Terdaftar */}
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl shadow-sm">
+          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+            Toko Terdaftar
+          </span>
+          <span className="text-lg sm:text-xl font-black text-emerald-600 dark:text-emerald-400 block mt-1">
+            {loading ? '...' : `${customersCount} Toko`}
+          </span>
+        </div>
+
+        {/* Metric 4: Toko Ada Utang */}
+        <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl shadow-sm">
+          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
+            Toko Menunggak
+          </span>
+          <span className="text-lg sm:text-xl font-black text-rose-600 dark:text-rose-400 block mt-1">
+            {loading ? '...' : `${delinquentCount} Toko`}
+          </span>
+        </div>
+      </div>
+
+      {/* Grid Menu Utama / Navigation Cards (Lengkap 6 Menu) */}
+      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
+        {/* Menu 1: Kelola Toko / Pelanggan */}
+        <Link
+          href="/dashboard/customers"
+          className="group bg-gradient-to-br from-blue-600 to-indigo-700 p-5 rounded-2xl text-white shadow-lg shadow-blue-500/10 hover:shadow-blue-500/25 transition transform hover:-translate-y-0.5 space-y-3"
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-2xl">🏪</span>
+            <span className="text-xs bg-white/20 px-2.5 py-1 rounded-full font-semibold">
+              Master Data
+            </span>
+          </div>
           <div>
-            <h1 className="text-2xl font-black text-white tracking-tight flex items-center gap-2">
-              📊 <span className="bg-gradient-to-r from-blue-400 to-indigo-400 bg-clip-text text-transparent">Dashboard Ringkasan Toko</span>
-            </h1>
-            <p className="text-sm text-slate-400 mt-1">
-              Pantau arus kas, piutang pelanggan, dan penugasan sales secara real-time.
+            <h3 className="font-bold text-lg group-hover:underline">Kelola Toko & Pelanggan</h3>
+            <p className="text-xs text-blue-100 mt-1">
+              Atur daftar toko, kontak, serta pantau kartu piutang & histori cicilan per pelanggan.
             </p>
           </div>
-          <div className="flex items-center gap-3">
-            <Link
-              href="/dashboard/invoice"
-              className="px-4 py-2.5 bg-blue-600 hover:bg-blue-500 text-white font-semibold rounded-xl shadow-lg shadow-blue-600/20 transition text-sm flex items-center gap-2 active:scale-95"
-            >
-              <span>➕</span> Buat Nota Baru
-            </Link>
-          </div>
-        </div>
+        </Link>
 
-        {/* Grid Stat Cards */}
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-5">
-          {/* Omzet Card */}
-          <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800 shadow-xl space-y-3 relative overflow-hidden group hover:border-emerald-500/40 transition">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Total Omzet</span>
-              <span className="p-2.5 bg-emerald-500/10 text-emerald-400 rounded-xl border border-emerald-500/20 text-lg">💰</span>
-            </div>
-            <p className="text-2xl font-black text-white">
-              {loading ? '...' : `Rp ${stats.totalOmzet.toLocaleString('id-ID')}`}
-            </p>
-            <span className="text-xs text-emerald-400 font-medium flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
-              Akumulasi seluruh transaksi
+        {/* Menu 2: Input Nota Penjualan */}
+        <Link
+          href="/dashboard/invoice"
+          className="group bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 rounded-2xl shadow-sm hover:border-blue-500 transition transform hover:-translate-y-0.5 space-y-3"
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-2xl">📝</span>
+            <span className="text-xs bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 px-2.5 py-1 rounded-full font-semibold">
+              Penjualan
             </span>
           </div>
-
-          {/* Piutang Card */}
-          <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800 shadow-xl space-y-3 relative overflow-hidden group hover:border-rose-500/40 transition">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Sisa Piutang</span>
-              <span className="p-2.5 bg-rose-500/10 text-rose-400 rounded-xl border border-rose-500/20 text-lg">⏳</span>
-            </div>
-            <p className="text-2xl font-black text-rose-400">
-              {loading ? '...' : `Rp ${stats.totalPiutang.toLocaleString('id-ID')}`}
+          <div>
+            <h3 className="font-bold text-lg text-slate-900 dark:text-white group-hover:text-blue-600">
+              Input Nota Transaksi
+            </h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+              Buat nota penjualan baru, cetak struk, dan catat opsi pembayaran tunai/kredit.
             </p>
-            <span className="text-xs text-rose-300 font-medium">
-              {stats.notaAktif} Nota Belum Lunas
+          </div>
+        </Link>
+
+        {/* Menu 3: Rekap Piutang & Nota */}
+        <Link
+          href="/dashboard/sales"
+          className="group bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 rounded-2xl shadow-sm hover:border-blue-500 transition transform hover:-translate-y-0.5 space-y-3"
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-2xl">📜</span>
+            <span className="text-xs bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 px-2.5 py-1 rounded-full font-semibold">
+              Piutang
             </span>
           </div>
-
-          {/* Penugasan Sales Card */}
-          <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800 shadow-xl space-y-3 relative overflow-hidden group hover:border-blue-500/40 transition">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Penugasan Sales</span>
-              <span className="p-2.5 bg-blue-500/10 text-blue-400 rounded-xl border border-blue-500/20 text-lg">🚚</span>
-            </div>
-            <p className="text-2xl font-black text-white">
-              {loading ? '...' : `${stats.notaAktif} Tagihan`}
+          <div>
+            <h3 className="font-bold text-lg text-slate-900 dark:text-white group-hover:text-blue-600">
+              Rekap Piutang & Nota
+            </h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+              Cek riwayat nota masuk, status pelunasan instan, dan log histori cicilan.
             </p>
-            <Link href="/dashboard/collections" className="text-xs text-blue-400 font-semibold hover:text-blue-300 hover:underline">
-              Atur Tagihan Sales →
-            </Link>
           </div>
+        </Link>
 
-          {/* Stok Menipis Card */}
-          <div className="bg-slate-900/90 p-5 rounded-2xl border border-slate-800 shadow-xl space-y-3 relative overflow-hidden group hover:border-amber-500/40 transition">
-            <div className="flex items-center justify-between">
-              <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Stok Menipis</span>
-              <span className="p-2.5 bg-amber-500/10 text-amber-400 rounded-xl border border-amber-500/20 text-lg">📦</span>
-            </div>
-            <p className="text-2xl font-black text-amber-400">
-              {loading ? '...' : `${stats.stokMenipis} Produk`}
-            </p>
-            <span className="text-xs text-slate-400 font-medium">
-              Perlu dikulak kembali
+        {/* Menu 4: Tagihan Sales */}
+        <Link
+          href="/dashboard/settlement"
+          className="group bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 rounded-2xl shadow-sm hover:border-blue-500 transition transform hover:-translate-y-0.5 space-y-3"
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-2xl">🚚</span>
+            <span className="text-xs bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 px-2.5 py-1 rounded-full font-semibold">
+              Setoran
             </span>
           </div>
-        </div>
-
-        {/* Menu Akses Cepat */}
-        <div className="space-y-3">
-          <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider">Akses Pintar</h2>
-          <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-4">
-            <Link
-              href="/dashboard/invoice"
-              className="p-4 bg-slate-900 border border-slate-800 hover:border-blue-500/50 hover:bg-slate-800/80 rounded-2xl transition text-center space-y-2 group shadow-lg"
-            >
-              <div className="text-2xl group-hover:scale-110 transition transform">📄</div>
-              <div className="text-xs font-bold text-slate-200 group-hover:text-white">Input Nota</div>
-            </Link>
-
-            <Link
-              href="/dashboard/sales"
-              className="p-4 bg-slate-900 border border-slate-800 hover:border-blue-500/50 hover:bg-slate-800/80 rounded-2xl transition text-center space-y-2 group shadow-lg"
-            >
-              <div className="text-2xl group-hover:scale-110 transition transform">📜</div>
-              <div className="text-xs font-bold text-slate-200 group-hover:text-white">Rekap & Piutang</div>
-            </Link>
-
-            <Link
-              href="/dashboard/collections"
-              className="p-4 bg-slate-900 border border-slate-800 hover:border-blue-500/50 hover:bg-slate-800/80 rounded-2xl transition text-center space-y-2 group shadow-lg"
-            >
-              <div className="text-2xl group-hover:scale-110 transition transform">🚚</div>
-              <div className="text-xs font-bold text-slate-200 group-hover:text-white">Tagihan Sales</div>
-            </Link>
-
-            <Link
-              href="/dashboard/products"
-              className="p-4 bg-slate-900 border border-slate-800 hover:border-blue-500/50 hover:bg-slate-800/80 rounded-2xl transition text-center space-y-2 group shadow-lg"
-            >
-              <div className="text-2xl group-hover:scale-110 transition transform">📦</div>
-              <div className="text-xs font-bold text-slate-200 group-hover:text-white">Stok Produk</div>
-            </Link>
-
-            {/* Menu Laporan Keuangan Ditambahkan di Sini! */}
-            <Link
-              href="/dashboard/reports"
-              className="p-4 bg-slate-900 border border-slate-800 hover:border-blue-500/50 hover:bg-slate-800/80 rounded-2xl transition text-center space-y-2 group shadow-lg col-span-2 sm:col-span-1"
-            >
-              <div className="text-2xl group-hover:scale-110 transition transform">📊</div>
-              <div className="text-xs font-bold text-slate-200 group-hover:text-white">Laporan Keuangan</div>
-            </Link>
+          <div>
+            <h3 className="font-bold text-lg text-slate-900 dark:text-white group-hover:text-blue-600">
+              Tagihan & Setoran Sales
+            </h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+              Rekap nota yang dibawa sales keliling dan pantau setoran uang fisik yang diterima.
+            </p>
           </div>
-        </div>
+        </Link>
 
-        {/* Transaksi Terbaru */}
-        <div className="bg-slate-900 rounded-2xl border border-slate-800 shadow-xl p-6 space-y-4">
-          <div className="flex items-center justify-between border-b border-slate-800 pb-4">
-            <h2 className="text-base font-bold text-white flex items-center gap-2">
-              <span>🕒</span> Transaksi Terbaru
-            </h2>
-            <Link href="/dashboard/sales" className="text-xs font-semibold text-blue-400 hover:text-blue-300 hover:underline">
-              Lihat Semua →
-            </Link>
+        {/* Menu 5: Stok Produk */}
+        <Link
+          href="/dashboard/products"
+          className="group bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 rounded-2xl shadow-sm hover:border-blue-500 transition transform hover:-translate-y-0.5 space-y-3"
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-2xl">📦</span>
+            <span className="text-xs bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 px-2.5 py-1 rounded-full font-semibold">
+              Inventaris
+            </span>
           </div>
+          <div>
+            <h3 className="font-bold text-lg text-slate-900 dark:text-white group-hover:text-blue-600">
+              Stok & Katalog Produk
+            </h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+              Kelola sisa stok fisik barang, harga jual Dus/Pcs, serta varian produk toko.
+            </p>
+          </div>
+        </Link>
 
-          {recentTx.length === 0 ? (
-            <p className="text-center py-6 text-slate-500 text-sm">Belum ada transaksi tercatat.</p>
-          ) : (
-            <div className="divide-y divide-slate-800/60">
-              {recentTx.map((tx) => (
-                <div key={tx.id} className="py-3.5 flex items-center justify-between gap-4 hover:bg-slate-800/40 px-3 rounded-xl transition">
-                  <div>
-                    <p className="text-sm font-bold text-white">{tx.customer_name}</p>
-                    <p className="text-xs text-slate-400">{tx.product_name}</p>
-                  </div>
-                  <div className="text-right space-y-1">
-                    <p className="text-sm font-black text-slate-100">
-                      Rp {(tx.total_price || 0).toLocaleString('id-ID')}
-                    </p>
-                    <span
-                      className={`inline-block text-[10px] font-bold px-2 py-0.5 rounded-md border ${
-                        tx.payment_status === 'PAID'
-                          ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20'
-                          : 'bg-amber-500/10 text-amber-400 border-amber-500/20'
-                      }`}
-                    >
-                      {tx.payment_status === 'PAID' ? 'LUNAS' : 'TEMPO'}
-                    </span>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+        {/* Menu 6: Laporan Keuangan */}
+        <Link
+          href="/dashboard/reports"
+          className="group bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 rounded-2xl shadow-sm hover:border-blue-500 transition transform hover:-translate-y-0.5 space-y-3"
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-2xl">📊</span>
+            <span className="text-xs bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 px-2.5 py-1 rounded-full font-semibold">
+              Laporan
+            </span>
+          </div>
+          <div>
+            <h3 className="font-bold text-lg text-slate-900 dark:text-white group-hover:text-blue-600">
+              Laporan & Rekapitulasi
+            </h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+              Laporan akumulasi omzet keseluruhan, realisasi kas masuk, dan ringkasan tagihan.
+            </p>
+          </div>
+        </Link>
       </div>
     </div>
   )
