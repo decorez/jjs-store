@@ -14,6 +14,7 @@ interface Transaction {
   customer_name: string
   total_price: number
   paid_amount: number
+  payment_status?: string
 }
 
 export default function DashboardPage() {
@@ -27,9 +28,13 @@ export default function DashboardPage() {
     async function fetchDashboardSummary() {
       setLoading(true)
 
+      // 🔍 Ditambahkan filter .neq('payment_status', 'DIBATALKAN')
       const [custRes, txRes] = await Promise.all([
         supabase.from('customers').select('id, name'),
-        supabase.from('transactions').select('id, customer_name, total_price, paid_amount')
+        supabase
+          .from('transactions')
+          .select('id, customer_name, total_price, paid_amount, payment_status')
+          .neq('payment_status', 'CANCELLED') // 👈 Mengabaikan transaksi yang dibatalkan
       ])
 
       const customersList: Customer[] = custRes.data || []
@@ -38,7 +43,7 @@ export default function DashboardPage() {
       // 1. Total Toko
       setCustomersCount(customersList.length)
 
-      // 2. Hitung Omzet & Piutang Keseluruhan
+      // 2. Hitung Omzet & Piutang Keseluruhan (Hanya Nota Aktif)
       let omzet = 0
       let kasMasuk = 0
       txList.forEach((tx) => {

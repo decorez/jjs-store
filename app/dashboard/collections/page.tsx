@@ -36,10 +36,12 @@ export default function CollectionPage() {
 
   const fetchTransactions = async () => {
     setLoading(true)
+    // 🔍 Mengabaikan status 'PAID' dan 'DIBATALKAN'
     const { data, error } = await supabase
       .from('transactions')
       .select('*')
       .neq('payment_status', 'PAID')
+      .neq('payment_status', 'CANCELLED') // 👈 Tambahkan filter ini
       .order('id', { ascending: false })
 
     if (error) {

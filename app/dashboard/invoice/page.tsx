@@ -25,6 +25,120 @@ interface ToastState {
   type: 'error' | 'success' | 'warning'
 }
 
+// 🔍 Komponen Autocomplete Barang per Baris
+function ProductSearchSelect({
+  selectedProductId,
+  selectedProductName,
+  productsList,
+  onSelectProduct,
+}: {
+  selectedProductId: string | number
+  selectedProductName: string
+  productsList: any[]
+  onSelectProduct: (product: any | 'MANUAL' | null) => void
+}) {
+  const [query, setQuery] = useState('')
+  const [isOpen, setIsOpen] = useState(false)
+  const dropdownRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    if (selectedProductId && selectedProductId !== 'MANUAL') {
+      const prod = productsList.find((p) => String(p.id) === String(selectedProductId))
+      if (prod) setQuery(prod.name)
+    } else if (selectedProductId === 'MANUAL') {
+      setQuery(selectedProductName)
+    } else {
+      setQuery('')
+    }
+  }, [selectedProductId, selectedProductName, productsList])
+
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (dropdownRef.current && !dropdownRef.current.contains(event.target as Node)) {
+        setIsOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  const filteredProducts = productsList.filter((p) =>
+    p.name?.toLowerCase().includes(query.toLowerCase())
+  )
+
+  return (
+    <div className="relative w-full" ref={dropdownRef}>
+      <div className="relative flex items-center">
+        <input
+          type="text"
+          placeholder="🔍 Ketik nama barang..."
+          value={query}
+          onChange={(e) => {
+            setQuery(e.target.value)
+            setIsOpen(true)
+            if (selectedProductId) onSelectProduct(null)
+          }}
+          onFocus={() => setIsOpen(true)}
+          className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-3 py-2 text-xs font-semibold focus:outline-none focus:border-blue-500 pr-7"
+        />
+        {query && (
+          <button
+            type="button"
+            onClick={() => {
+              setQuery('')
+              onSelectProduct(null)
+            }}
+            className="absolute right-2 text-slate-400 hover:text-slate-200 font-bold text-xs"
+            title="Reset Barang"
+          >
+            ✕
+          </button>
+        )}
+      </div>
+
+      {isOpen && (
+        <div className="absolute z-40 top-full left-0 right-0 mt-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-2xl max-h-52 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
+          {filteredProducts.length > 0 ? (
+            filteredProducts.map((p) => (
+              <div
+                key={p.id}
+                onClick={() => {
+                  onSelectProduct(p)
+                  setQuery(p.name)
+                  setIsOpen(false)
+                }}
+                className="p-2.5 hover:bg-blue-50 dark:hover:bg-blue-950/50 cursor-pointer transition flex justify-between items-center text-xs"
+              >
+                <div>
+                  <span className="font-bold text-slate-900 dark:text-slate-100 block">📦 {p.name}</span>
+                  <span className="text-[10px] text-slate-400">
+                    Rp {Number(p.selling_price_per_box ?? p.harga_dus ?? 0).toLocaleString('id-ID')} / Dus
+                  </span>
+                </div>
+                <span className="text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-400 px-2 py-0.5 rounded-full font-semibold shrink-0">
+                  Stok: {p.box_stock || 0} Dus
+                </span>
+              </div>
+            ))
+          ) : (
+            <div className="p-2.5 text-xs text-slate-400 text-center">Barang "{query}" tidak ditemukan.</div>
+          )}
+
+          <div
+            onClick={() => {
+              onSelectProduct('MANUAL')
+              setIsOpen(false)
+            }}
+            className="p-2.5 bg-blue-50/50 dark:bg-blue-950/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 cursor-pointer transition text-xs font-bold text-blue-600 dark:text-blue-400 flex items-center gap-1.5"
+          >
+            <span>✍️</span> + Input Nama Barang Custom / Manual
+          </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
 export default function InvoicePage() {
   const router = useRouter()
 
@@ -91,7 +205,7 @@ export default function InvoicePage() {
     fetchMasterData()
   }, [])
 
-  // Event handler untuk menutup dropdown toko saat klik di luar
+  // Event handler menutup dropdown toko saat klik di luar
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (customerDropdownRef.current && !customerDropdownRef.current.contains(event.target as Node)) {
@@ -102,7 +216,7 @@ export default function InvoicePage() {
     return () => document.removeEventListener('mousedown', handleClickOutside)
   }, [])
 
-  // Filter Toko Berdasarkan Nama, Alamat, atau No HP
+  // Filter Toko
   const filteredCustomers = customers.filter(
     (c) =>
       c.name.toLowerCase().includes(customerSearchQuery.toLowerCase()) ||
@@ -110,7 +224,6 @@ export default function InvoicePage() {
       (c.phone && c.phone.includes(customerSearchQuery))
   )
 
-  // Handler Pilih Toko Terdaftar
   const handleSelectCustomer = (customer: Customer) => {
     setSelectedCustomerData(customer)
     setCustomerSearchQuery(customer.name)
@@ -118,7 +231,6 @@ export default function InvoicePage() {
     setIsCustomerDropdownOpen(false)
   }
 
-  // Handler Reset Pilihan Toko
   const handleClearCustomer = () => {
     setSelectedCustomerData(null)
     setCustomerSearchQuery('')
@@ -140,36 +252,47 @@ export default function InvoicePage() {
     setItems(items.filter((_, i) => i !== index))
   }
 
+  const handleSelectProductInItem = (index: number, selected: any | 'MANUAL' | null) => {
+    const updatedItems = [...items]
+    const currentItem = updatedItems[index]
+
+    if (!selected) {
+      updatedItems[index] = {
+        ...currentItem,
+        product_id: '',
+        product_name: '',
+        price: 0
+      }
+    } else if (selected === 'MANUAL') {
+      updatedItems[index] = {
+        ...currentItem,
+        product_id: 'MANUAL',
+        product_name: '',
+        unit: 'Dus',
+        price: 0
+      }
+    } else {
+      const allowsPcs = canSellPcs(selected)
+      const targetUnit = allowsPcs ? currentItem.unit : 'Dus'
+      const autoPrice = targetUnit === 'Dus' ? getBoxPrice(selected) : getPcsPrice(selected)
+
+      updatedItems[index] = {
+        ...currentItem,
+        product_id: selected.id,
+        product_name: selected.name,
+        unit: targetUnit,
+        price: autoPrice
+      }
+    }
+
+    setItems(updatedItems)
+  }
+
   const handleItemChange = (index: number, field: keyof InvoiceItem, value: any) => {
     const updatedItems = [...items]
     const currentItem = updatedItems[index]
 
-    if (field === 'product_id') {
-      if (value === 'MANUAL') {
-        updatedItems[index] = {
-          ...currentItem,
-          product_id: 'MANUAL',
-          product_name: '',
-          unit: 'Dus',
-          price: 0
-        }
-      } else {
-        const foundProd = productsList.find((p) => String(p.id) === String(value))
-        if (foundProd) {
-          const allowsPcs = canSellPcs(foundProd)
-          const targetUnit = allowsPcs ? currentItem.unit : 'Dus'
-          const autoPrice = targetUnit === 'Dus' ? getBoxPrice(foundProd) : getPcsPrice(foundProd)
-
-          updatedItems[index] = {
-            ...currentItem,
-            product_id: value,
-            product_name: foundProd.name,
-            unit: targetUnit,
-            price: autoPrice
-          }
-        }
-      }
-    } else if (field === 'unit') {
+    if (field === 'unit') {
       const foundProd = productsList.find((p) => String(p.id) === String(currentItem.product_id))
       let autoPrice = currentItem.price
 
@@ -206,7 +329,6 @@ export default function InvoicePage() {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
-    // 🛑 Validasi Toko / Pelanggan
     let finalCustomerName = ''
     let finalCustomerAddress = ''
     let finalCustomerId: number | null = null
@@ -227,14 +349,12 @@ export default function InvoicePage() {
       return
     }
 
-    // Validasi Item Barang
     const validItems = items.filter(item => item.product_name.trim() !== '' && item.quantity > 0)
     if (validItems.length === 0) {
       showToast('⚠️ Pilih minimal 1 barang dengan jumlah yang valid!', 'warning')
       return
     }
 
-    // Validasi Kecukupan Stok
     for (const item of validItems) {
       if (item.product_id === 'MANUAL') continue
 
@@ -280,7 +400,6 @@ export default function InvoicePage() {
           ]
         : []
 
-    // 📝 Simpan Transaksi Ke Database (dengan ID & Alamat)
     const { error: txError } = await supabase.from('transactions').insert([
       {
         customer_id: finalCustomerId,
@@ -302,7 +421,6 @@ export default function InvoicePage() {
       return
     }
 
-    // 📦 Potong Stok Barang
     for (const item of validItems) {
       if (item.product_id === 'MANUAL') continue
 
@@ -396,7 +514,7 @@ export default function InvoicePage() {
       </div>
 
       <form onSubmit={handleSubmit} noValidate className="space-y-6">
-        {/* Card 1: Informasi Toko (Searchable Autocomplete) & Tanggal */}
+        {/* Card 1: Informasi Toko & Tanggal */}
         <div className="bg-white dark:bg-slate-900 p-5 sm:p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
           <h2 className="text-sm font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
             <span>🏪</span> Informasi Toko & Tanggal
@@ -446,7 +564,6 @@ export default function InvoicePage() {
                 )}
               </div>
 
-              {/* Dropdown Floating Result */}
               {isCustomerDropdownOpen && (
                 <div className="absolute z-30 top-full left-0 right-0 mt-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-2xl max-h-60 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
                   {loadingData ? (
@@ -494,7 +611,6 @@ export default function InvoicePage() {
             </div>
           </div>
 
-          {/* Badge Toko Terpilih */}
           {selectedCustomerData && (
             <div className="bg-emerald-500/10 border border-emerald-500/20 p-3 rounded-xl flex items-center justify-between">
               <div className="text-xs">
@@ -514,7 +630,6 @@ export default function InvoicePage() {
             </div>
           )}
 
-          {/* Form Input Toko Baru (Manual) */}
           {isManualCustomer && (
             <div className="bg-blue-50/50 dark:bg-blue-950/30 p-4 rounded-xl border border-blue-200 dark:border-blue-900/50 space-y-3">
               <div className="text-xs font-bold text-blue-600 dark:text-blue-400">📝 Form Toko Baru (Manual)</div>
@@ -544,7 +659,7 @@ export default function InvoicePage() {
           )}
         </div>
 
-        {/* Card 2: Rincian Barang (Multi-Item) */}
+        {/* Card 2: Rincian Barang (Multi-Item Searchable) */}
         <div className="bg-white dark:bg-slate-900 p-5 sm:p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-sm font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
@@ -570,28 +685,22 @@ export default function InvoicePage() {
                   key={index}
                   className="bg-slate-50 dark:bg-slate-950/60 p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 grid grid-cols-1 md:grid-cols-12 gap-3 items-center"
                 >
+                  {/* BARANG SEARCHABLE AUTOCOMPLETE */}
                   <div className="md:col-span-4 space-y-1">
-                    <label className="text-[10px] font-bold text-slate-400 block md:hidden">
+                    <label className="text-[10px] font-bold text-slate-400 block mb-1">
                       Produk #{index + 1}
                     </label>
-                    <select
-                      value={item.product_id}
-                      onChange={(e) => handleItemChange(index, 'product_id', e.target.value)}
-                      className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-3 py-2 text-xs font-semibold focus:outline-none focus:border-blue-500"
-                    >
-                      <option value="">-- Pilih Barang dari Katalog --</option>
-                      {productsList.map((p) => (
-                        <option key={p.id} value={p.id}>
-                          📦 {p.name} (Stok: {p.box_stock || 0} Dus)
-                        </option>
-                      ))}
-                      <option value="MANUAL">✍️ Input Nama Barang Custom</option>
-                    </select>
+                    <ProductSearchSelect
+                      selectedProductId={item.product_id}
+                      selectedProductName={item.product_name}
+                      productsList={productsList}
+                      onSelectProduct={(selected) => handleSelectProductInItem(index, selected)}
+                    />
 
                     {item.product_id === 'MANUAL' && (
                       <input
                         type="text"
-                        placeholder="Nama barang custom..."
+                        placeholder="Ketik nama barang custom..."
                         value={item.product_name}
                         onChange={(e) => handleItemChange(index, 'product_name', e.target.value)}
                         className="w-full mt-1.5 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-3 py-1.5 text-xs focus:outline-none focus:border-blue-500"

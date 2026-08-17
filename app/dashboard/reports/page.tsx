@@ -21,9 +21,11 @@ export default function ReportsPage() {
 
   const fetchTransactions = async () => {
     setLoading(true)
+    // 🔍 Menambahkan filter .neq('payment_status', 'CANCELLED')
     const { data, error } = await supabase
       .from('transactions')
       .select('*')
+      .neq('payment_status', 'CANCELLED') // 👈 Mengabaikan transaksi yang dibatalkan
       .order('id', { ascending: false })
 
     if (data) setTransactions(data)
@@ -70,7 +72,7 @@ export default function ReportsPage() {
             Total Keseluruhan Omset
           </span>
           <div className="text-2xl font-black text-blue-600 dark:text-blue-400">
-            Rp {totalOmzet.toLocaleString('id-ID')}
+            {loading ? '...' : `Rp ${totalOmzet.toLocaleString('id-ID')}`}
           </div>
           <p className="text-[11px] text-slate-400">
             Akumulasi nilai seluruh transaksi nota tercatat.
@@ -83,7 +85,7 @@ export default function ReportsPage() {
             Kas Masuk (Paid)
           </span>
           <div className="text-2xl font-black text-emerald-600 dark:text-emerald-400">
-            Rp {totalPaidCash.toLocaleString('id-ID')}
+            {loading ? '...' : `Rp ${totalPaidCash.toLocaleString('id-ID')}`}
           </div>
           <p className="text-[11px] text-slate-400">
             Total dana tunai & cicilan yang sudah lunas/diterima.
@@ -96,7 +98,7 @@ export default function ReportsPage() {
             Total Tagihan (Unpaid)
           </span>
           <div className="text-2xl font-black text-amber-600 dark:text-amber-400">
-            Rp {totalPiutang.toLocaleString('id-ID')}
+            {loading ? '...' : `Rp ${totalPiutang.toLocaleString('id-ID')}`}
           </div>
           <p className="text-[11px] text-slate-400">
             Sisa piutang dagang yang belum dibayar toko.
