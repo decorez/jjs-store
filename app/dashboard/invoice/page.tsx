@@ -400,12 +400,16 @@ export default function InvoicePage() {
           ]
         : []
 
+    // 📅 Format tanggal ke ISO jam 12 siang agar timezone WIB aman
+    const formattedCreatedAt = transactionDate ? `${transactionDate}T12:00:00` : new Date().toISOString()
+
     const { error: txError } = await supabase.from('transactions').insert([
       {
         customer_id: finalCustomerId,
         customer_name: finalCustomerName,
         customer_address: finalCustomerAddress,
         transaction_date: transactionDate,
+        created_at: formattedCreatedAt, // 👈 Disamakan dengan tanggal input
         product_name: productSummary,
         total_price: totalPrice,
         paid_amount: paidNum,
