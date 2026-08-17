@@ -244,6 +244,21 @@ export default function SalesHistoryPage() {
                   const isPaid = tx.payment_status === 'PAID'
                   const isPartial = tx.payment_status === 'PARTIAL'
 
+                  // 📅 Format tanggal: Utamakan created_at yang baru di-update, fallback ke transaction_date
+                  const rawDate = tx.created_at || tx.transaction_date
+                  let formattedDate = 'Tanpa tanggal'
+                  
+                  if (rawDate) {
+                    const dateOnly = rawDate.includes('T') ? rawDate.split('T')[0] : rawDate
+                    const parts = dateOnly.split('-')
+                    if (parts.length === 3) {
+                      // Ubah dari YYYY-MM-DD menjadi DD/MM/YYYY
+                      formattedDate = `${parts[2]}-${parts[1]}-${parts[0]}`
+                    } else {
+                      formattedDate = rawDate
+                    }
+                  }
+
                   return (
                     <tr
                       key={tx.id}
@@ -257,7 +272,7 @@ export default function SalesHistoryPage() {
                           🏪 {tx.customer_name}
                         </div>
                         <div className="text-[11px] text-slate-500 mt-0.5">
-                          📅 {tx.transaction_date || 'Tanpa tanggal'}
+                          📅 {formattedDate}
                         </div>
                       </td>
 

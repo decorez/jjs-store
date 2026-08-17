@@ -8,15 +8,29 @@ interface Transaction {
   id: number
   customer_name: string
   created_at?: string
+  transaction_date?: string
   due_date?: string
   total_price: number
   paid_amount: number
+  product_name?: string
   items_summary?: string
   assigned_sales?: string | null
   is_carried?: boolean
 }
 
 const SALES_OPTIONS = ['Eko']
+
+// Helper Format Tanggal Elegan (contoh: 17 Agt 2026)
+const formatDate = (dateString?: string) => {
+  if (!dateString) return '-'
+  const date = new Date(dateString)
+  if (isNaN(date.getTime())) return dateString
+  return new Intl.DateTimeFormat('id-ID', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric'
+  }).format(date)
+}
 
 export default function CollectionPage() {
   const [transactions, setTransactions] = useState<Transaction[]>([])
@@ -27,6 +41,13 @@ export default function CollectionPage() {
   const [selectedSales, setSelectedSales] = useState<string>('')
   const [checkedIds, setCheckedIds] = useState<number[]>([])
 
+  // State Modal Edit Nota
+  const [editingTx, setEditingTx] = useState<Transaction | null>(null)
+  const [editDate, setEditDate] = useState('')
+  const [editProduct, setEditProduct] = useState('')
+  const [editPrice, setEditPrice] = useState<number>(0)
+  const [savingEdit, setSavingEdit] = useState(false)
+
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
 
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
@@ -36,12 +57,11 @@ export default function CollectionPage() {
 
   const fetchTransactions = async () => {
     setLoading(true)
-    // 🔍 Mengabaikan status 'PAID' dan 'DIBATALKAN'
     const { data, error } = await supabase
       .from('transactions')
       .select('*')
       .neq('payment_status', 'PAID')
-      .neq('payment_status', 'CANCELLED') // 👈 Tambahkan filter ini
+      .neq('payment_status', 'CANCELLED')
       .order('id', { ascending: false })
 
     if (error) {
@@ -63,7 +83,7 @@ export default function CollectionPage() {
     )
   }
 
-  // Checkbox Select All (Hanya yang belum dibawa sales)
+  // Checkbox Select All
   const availableTransactions = transactions.filter((tx) => !tx.is_carried)
   const isAllChecked =
     availableTransactions.length > 0 &&
@@ -77,7 +97,7 @@ export default function CollectionPage() {
     }
   }
 
-  // Proses Serahkan Nota Secara Massal (Batch)
+  // Batch Assign Sales
   const handleBatchAssign = async () => {
     if (!selectedSales) {
       showToast('Pilih Sales bertugas terlebih dahulu!', 'error')
@@ -107,7 +127,7 @@ export default function CollectionPage() {
     setLoading(false)
   }
 
-  // Batal Bawa Nota Per Baris
+  // Batal Bawa Nota
   const handleCancelCarried = async (txId: number) => {
     const { error } = await supabase
       .from('transactions')
@@ -125,10 +145,47 @@ export default function CollectionPage() {
     }
   }
 
+  // Buka Modal Edit
+  const handleOpenEdit = (tx: Transaction) => {
+    setEditingTx(tx)
+    // Ambil YYYY-MM-DD dari created_at
+    const rawDate = tx.created_at ? tx.created_at.substring(0, 10) : (tx.transaction_date || '')
+    setEditDate(rawDate)
+    setEditProduct(tx.product_name || tx.items_summary || '')
+    setEditPrice(tx.total_price || 0)
+  }
+
+  // Simpan Perubahan Edit
+  const handleSaveEdit = async () => {
+    if (!editingTx) return
+    setSavingEdit(true)
+
+    const formattedCreatedAt = editDate ? `${editDate}T12:00:00` : new Date().toISOString()
+
+    const { error } = await supabase
+      .from('transactions')
+      .update({
+        created_at: formattedCreatedAt,
+        transaction_date: editDate,  // 👈 Update juga kolom transaction_date
+        product_name: editProduct,
+        total_price: Number(editPrice),
+      })
+      .eq('id', editingTx.id)
+
+    if (error) {
+      showToast('Gagal update: ' + error.message, 'error')
+    } else {
+      showToast('Berhasil disimpan!', 'success')
+      setEditingTx(null)
+      fetchTransactions()
+    }
+    setSavingEdit(false)
+  }
+
   const filteredTransactions = transactions.filter(
     (tx) =>
       tx.customer_name?.toLowerCase().includes(search.toLowerCase()) ||
-      tx.items_summary?.toLowerCase().includes(search.toLowerCase())
+      (tx.product_name || tx.items_summary || '').toLowerCase().includes(search.toLowerCase())
   )
 
   const totalPiutang = transactions.reduce(
@@ -182,7 +239,6 @@ export default function CollectionPage() {
 
       {/* BAR PENYERAHAN BATCH & PENCARIAN */}
       <div className="bg-[#0b1329] border border-slate-800 p-4 rounded-2xl shadow-xl flex flex-col md:flex-row gap-4 items-stretch md:items-center justify-between">
-        {/* Kontrol Penyerahan Sales */}
         <div className="flex flex-wrap items-center gap-3 flex-1">
           <select
             value={selectedSales}
@@ -206,7 +262,6 @@ export default function CollectionPage() {
           </button>
         </div>
 
-        {/* Input Cari */}
         <div className="bg-[#070c1a] border border-slate-800 px-3 py-2 rounded-xl flex items-center gap-2 md:w-64">
           <span className="text-slate-400 text-xs">🔍</span>
           <input
@@ -222,7 +277,7 @@ export default function CollectionPage() {
       {/* Tabel Tagihan */}
       <div className="bg-[#0b1329] border border-slate-800 rounded-2xl shadow-xl overflow-hidden">
         {loading ? (
-          <div className="p-8 text-center text-xs text-slate-400">Memuat data nota...</div>
+          <div className="p-8 text-center text-xs text-slate-400 animate-pulse">Memuat data nota...</div>
         ) : filteredTransactions.length === 0 ? (
           <div className="p-8 text-center text-xs text-slate-400">
             Tidak ada nota piutang yang ditemukan.
@@ -246,6 +301,7 @@ export default function CollectionPage() {
                   <th className="py-3.5 px-4 text-right">Total Nota</th>
                   <th className="py-3.5 px-4 text-right">Sisa Tagihan</th>
                   <th className="py-3.5 px-4 text-center">Status / Sales Bawa</th>
+                  <th className="py-3.5 px-4 text-center">Aksi</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-800/60 font-medium">
@@ -253,6 +309,8 @@ export default function CollectionPage() {
                   const remaining = (tx.total_price || 0) - (tx.paid_amount || 0)
                   const isCarried = tx.is_carried
                   const isChecked = checkedIds.includes(tx.id)
+                  const displayDate = tx.created_at || tx.transaction_date
+                  const displayProduct = tx.product_name || tx.items_summary || '-'
 
                   return (
                     <tr
@@ -282,12 +340,17 @@ export default function CollectionPage() {
                       <td className="py-3.5 px-4 font-bold text-slate-100">
                         🏪 {tx.customer_name}
                       </td>
-                      <td className="py-3.5 px-4 text-slate-400">
-                        📅 {tx.created_at ? tx.created_at.substring(0, 10) : tx.due_date || '-'}
+                      
+                      {/* Tanggal Terformat Elegan */}
+                      <td className="py-3.5 px-4 text-slate-300 font-medium whitespace-nowrap">
+                        📅 {formatDate(displayDate)}
                       </td>
-                      <td className="py-3.5 px-4 text-slate-300 max-w-xs truncate">
-                        {tx.items_summary || '-'}
+
+                      {/* Nama Produk */}
+                      <td className="py-3.5 px-4 text-slate-300 max-w-xs truncate" title={displayProduct}>
+                        {displayProduct}
                       </td>
+
                       <td className="py-3.5 px-4 text-right font-bold text-slate-200">
                         Rp {(tx.total_price || 0).toLocaleString('id-ID')}
                       </td>
@@ -315,6 +378,16 @@ export default function CollectionPage() {
                           </span>
                         )}
                       </td>
+
+                      {/* Tombol Edit Nota */}
+                      <td className="py-3.5 px-4 text-center">
+                        <button
+                          onClick={() => handleOpenEdit(tx)}
+                          className="px-2.5 py-1 bg-slate-800 hover:bg-slate-700 text-slate-300 hover:text-white rounded-lg border border-slate-700 text-[11px] font-semibold transition flex items-center gap-1 mx-auto"
+                        >
+                          ✏️ Edit
+                        </button>
+                      </td>
                     </tr>
                   )
                 })}
@@ -323,6 +396,78 @@ export default function CollectionPage() {
           </div>
         )}
       </div>
+
+      {/* MODAL EDIT NOTA */}
+      {editingTx && (
+        <div className="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-[#0b1329] border border-slate-800 rounded-2xl max-w-md w-full p-5 space-y-4 shadow-2xl">
+            <div className="flex justify-between items-center border-b border-slate-800 pb-3">
+              <h3 className="font-bold text-sm text-white flex items-center gap-2">
+                <span>✏️</span> Edit Nota {editingTx.customer_name}
+              </h3>
+              <button
+                onClick={() => setEditingTx(null)}
+                className="text-slate-400 hover:text-white text-xs font-bold px-2 py-1"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-3 text-xs">
+              {/* Edit Tanggal */}
+              <div>
+                <label className="block text-slate-400 font-bold mb-1">Tanggal Transaksi</label>
+                <input
+                  type="date"
+                  value={editDate}
+                  onChange={(e) => setEditDate(e.target.value)}
+                  className="bg-slate-800 text-white border border-slate-700 rounded-xl p-2.5 [color-scheme:dark]"
+                />
+              </div>
+
+              {/* Edit Pesanan Barang */}
+              <div>
+                <label className="block text-slate-400 font-bold mb-1">Pesanan Barang / Rincian</label>
+                <textarea
+                  rows={2}
+                  value={editProduct}
+                  onChange={(e) => setEditProduct(e.target.value)}
+                  className="w-full bg-[#070c1a] border border-slate-700 rounded-xl p-2.5 text-white focus:outline-none focus:border-blue-500 resize-none"
+                  placeholder="Contoh: 50 Dus Ale-Ale, 30 Dus Power F"
+                />
+              </div>
+
+              {/* Edit Total Harga */}
+              <div>
+                <label className="block text-slate-400 font-bold mb-1">Total Nota (Rp)</label>
+                <input
+                  type="number"
+                  value={editPrice}
+                  onChange={(e) => setEditPrice(Number(e.target.value))}
+                  className="w-full bg-[#070c1a] border border-slate-700 rounded-xl p-2.5 text-white font-bold focus:outline-none focus:border-blue-500"
+                />
+              </div>
+            </div>
+
+            {/* Modal Actions */}
+            <div className="flex items-center justify-end gap-2 pt-3 border-t border-slate-800">
+              <button
+                onClick={() => setEditingTx(null)}
+                className="px-4 py-2 bg-slate-800 hover:bg-slate-700 text-slate-300 rounded-xl text-xs font-bold transition"
+              >
+                Batal
+              </button>
+              <button
+                onClick={handleSaveEdit}
+                disabled={savingEdit}
+                className="px-4 py-2 bg-blue-600 hover:bg-blue-500 disabled:opacity-50 text-white rounded-xl text-xs font-bold transition shadow-lg shadow-blue-600/20"
+              >
+                {savingEdit ? 'Menyimpan...' : 'Simpan Perubahan'}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
