@@ -4,307 +4,455 @@ import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 import Link from 'next/link'
 
-export default function ProductsPage() {
-  const [products, setProducts] = useState<any[]>([])
-  const [loading, setLoading] = useState(false)
-  const [showAddModal, setShowAddModal] = useState(false)
+interface Product {
+  id: number
+  name: string
+  box_stock: number
+  bottle_stock: number
+  units_per_box: number
+  selling_price_per_box: number
+  selling_price_per_bottle: number
+  is_retail_allowed: boolean
+}
 
-  const [name, setName] = useState('')
-  const [boxStock, setBoxStock] = useState('')
-  const [bottleStock, setBottleStock] = useState('')
-  const [unitsPerBox, setUnitsPerBox] = useState('12')
-  const [priceBox, setPriceBox] = useState('')
-  const [priceBottle, setPriceBottle] = useState('')
-  const [isRetailAllowed, setIsRetailAllowed] = useState(true)
+interface ToastState {
+  message: string
+  type: 'error' | 'success' | 'warning'
+}
 
+export default function ProductsMasterPage() {
+  const [products, setProducts] = useState<Product[]>([])
+  const [loading, setLoading] = useState(true)
+  const [searchTerm, setSearchTerm] = useState('')
+
+  // State Modal (Tambah / Edit)
+  const [isModalOpen, setIsModalOpen] = useState(false)
+  const [editingProduct, setEditingProduct] = useState<Product | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+
+  // State Confirmation Modal (Hapus)
+  const [deletingProduct, setDeletingProduct] = useState<Product | null>(null)
+
+  // State Custom Toast
+  const [toast, setToast] = useState<ToastState | null>(null)
+
+  // State Form Input Produk
+  const [formData, setFormData] = useState({
+    name: '',
+    box_stock: 0,
+    bottle_stock: 0,
+    units_per_box: 1,
+    selling_price_per_box: 0,
+    selling_price_per_bottle: 0,
+    is_retail_allowed: false,
+  })
+
+  const showToast = (message: string, type: 'error' | 'success' | 'warning' = 'success') => {
+    setToast({ message, type })
+    setTimeout(() => setToast(null), 3500)
+  }
+
+  // Fetch Semua Produk
   const fetchProducts = async () => {
-    const { data, error } = await supabase.from('products').select('*').order('name')
-    if (data) setProducts(data)
-    if (error) console.error('Error fetching products:', error.message)
+    setLoading(true)
+    const { data, error } = await supabase
+      .from('products')
+      .select('*')
+      .order('name', { ascending: true })
+
+    if (error) {
+      showToast('Gagal memuat daftar produk: ' + error.message, 'error')
+    } else if (data) {
+      setProducts(data)
+    }
+    setLoading(false)
   }
 
   useEffect(() => {
     fetchProducts()
   }, [])
 
-  const handleAddProduct = async (e: React.FormEvent) => {
+  // Buka Modal untuk Tambah Produk Baru
+  const handleOpenAddModal = () => {
+    setEditingProduct(null)
+    setFormData({
+      name: '',
+      box_stock: 0,
+      bottle_stock: 0,
+      units_per_box: 12,
+      selling_price_per_box: 0,
+      selling_price_per_bottle: 0,
+      is_retail_allowed: false,
+    })
+    setIsModalOpen(true)
+  }
+
+  // Buka Modal untuk Edit Produk
+  const handleOpenEditModal = (product: Product) => {
+    setEditingProduct(product)
+    setFormData({
+      name: product.name,
+      box_stock: product.box_stock || 0,
+      bottle_stock: product.bottle_stock || 0,
+      units_per_box: product.units_per_box || 1,
+      selling_price_per_box: product.selling_price_per_box || 0,
+      selling_price_per_bottle: product.selling_price_per_bottle || 0,
+      is_retail_allowed: product.is_retail_allowed || false,
+    })
+    setIsModalOpen(true)
+  }
+
+  // Submit Handler (Tambah / Update)
+  const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
-    if (!name.trim()) {
-      alert('Nama produk harus diisi!')
+
+    if (!formData.name.trim()) {
+      showToast('⚠️ Nama produk tidak boleh kosong!', 'warning')
       return
     }
 
-    setLoading(true)
-    const { error } = await supabase.from('products').insert([
-      {
-        name: name.trim(),
-        box_stock: Number(boxStock) || 0,
-        bottle_stock: Number(bottleStock) || 0,
-        units_per_box: Number(unitsPerBox) || 12,
-        selling_price_per_box: Number(priceBox) || 0,
-        selling_price_per_bottle: Number(priceBottle) || 0,
-        is_retail_allowed: isRetailAllowed,
+    setSubmitting(true)
+
+    const payload = {
+      name: formData.name.trim(),
+      box_stock: Number(formData.box_stock),
+      bottle_stock: Number(formData.bottle_stock),
+      units_per_box: Number(formData.units_per_box),
+      selling_price_per_box: Number(formData.selling_price_per_box),
+      selling_price_per_bottle: Number(formData.selling_price_per_bottle),
+      is_retail_allowed: formData.is_retail_allowed,
+    }
+
+    if (editingProduct) {
+      // PROSES UPDATE
+      const { error } = await supabase
+        .from('products')
+        .update(payload)
+        .eq('id', editingProduct.id)
+
+      if (error) {
+        showToast('Gagal memperbarui produk: ' + error.message, 'error')
+      } else {
+        showToast(`✅ Produk "${formData.name}" berhasil diperbarui!`, 'success')
+        setIsModalOpen(false)
+        fetchProducts()
       }
-    ])
+    } else {
+      // PROSES SIMPAN BARU
+      const { error } = await supabase.from('products').insert([payload])
+
+      if (error) {
+        showToast('Gagal menambahkan produk: ' + error.message, 'error')
+      } else {
+        showToast(`✅ Produk "${formData.name}" berhasil ditambahkan!`, 'success')
+        setIsModalOpen(false)
+        fetchProducts()
+      }
+    }
+
+    setSubmitting(false)
+  }
+
+  // Handler Hapus Produk
+  const ConfirmDeleteProduct = async () => {
+    if (!deletingProduct) return
+
+    const { error } = await supabase
+      .from('products')
+      .delete()
+      .eq('id', deletingProduct.id)
 
     if (error) {
-      alert('Gagal menambah produk: ' + error.message)
+      showToast('Gagal menghapus produk: ' + error.message, 'error')
     } else {
-      alert('Produk baru berhasil ditambahkan!')
-      setName('')
-      setBoxStock('')
-      setBottleStock('')
-      setPriceBox('')
-      setPriceBottle('')
-      setIsRetailAllowed(true)
-      setShowAddModal(false)
+      showToast(`🗑️ Produk "${deletingProduct.name}" berhasil dihapus.`, 'success')
       fetchProducts()
     }
-    setLoading(false)
+
+    setDeletingProduct(null)
   }
 
-  // Fungsi untuk mengonversi dan memformat stok Dus dan Pcs dengan akurat
-  const formatStock = (box: number, bottle: number, unitsPerBox: number) => {
-    const bBox = box || 0
-    const bBottle = bottle || 0
-    const limit = unitsPerBox || 12
-
-    // Konversi total ke Pcs lalu dipecah ulang ke Dus & Pcs
-    const totalPcs = (bBox * limit) + bBottle
-    const finalBox = Math.floor(totalPcs / limit)
-    const finalBottle = totalPcs % limit
-
-    if (finalBox === 0 && finalBottle === 0) return 'Habis'
-    
-    // Jika sisa Pcs adalah 0, tampilkan Dus-nya saja!
-    if (finalBottle === 0) return `${finalBox} Dus`
-    
-    // Jika ada sisa Dus dan ada sisa Pcs, tampilkan keduanya
-    if (finalBox === 0) return `${finalBottle} Pcs`
-    return `${finalBox} Dus ${finalBottle} Pcs`
-  }
+  // Filter Search
+  const filteredProducts = products.filter((p) =>
+    p.name.toLowerCase().includes(searchTerm.toLowerCase())
+  )
 
   return (
-    <div className="p-3.5 sm:p-6 max-w-6xl mx-auto space-y-6 text-slate-900 dark:text-slate-100 transition-colors duration-300">
-      {/* Top Header Controls */}
-      <div className="flex justify-between items-center gap-4">
-        <Link 
-          href="/dashboard"
-          className="inline-flex items-center text-xs sm:text-sm font-semibold text-slate-500 dark:text-slate-400 hover:text-blue-600 dark:hover:text-blue-400 transition gap-1"
-        >
-          ← Kembali ke Dashboard
-        </Link>
+    <div className="p-3.5 sm:p-6 max-w-6xl mx-auto space-y-6 text-slate-900 dark:text-slate-100 relative">
+      {/* 🔔 CUSTOM TOAST NOTIFICATION */}
+      {toast && (
+        <div className="fixed top-5 right-5 z-50 max-w-md animate-bounce-short">
+          <div
+            className={`flex items-center gap-3 p-4 rounded-2xl shadow-2xl border backdrop-blur-md transition-all ${
+              toast.type === 'error'
+                ? 'bg-rose-950/90 border-rose-500/50 text-rose-200'
+                : toast.type === 'warning'
+                ? 'bg-amber-950/90 border-amber-500/50 text-amber-200'
+                : 'bg-emerald-950/90 border-emerald-500/50 text-emerald-200'
+            }`}
+          >
+            <span className="text-xl">
+              {toast.type === 'error' ? '❌' : toast.type === 'warning' ? '⚠️' : '✅'}
+            </span>
+            <span className="text-xs sm:text-sm font-semibold">{toast.message}</span>
+          </div>
+        </div>
+      )}
+
+      {/* Header */}
+      <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+        <div>
+          <Link
+            href="/dashboard"
+            className="inline-flex items-center text-xs sm:text-sm font-semibold text-slate-500 hover:text-blue-600 transition gap-1 mb-1"
+          >
+            ← Kembali ke Dashboard
+          </Link>
+          <h1 className="text-xl sm:text-2xl font-black flex items-center gap-2">
+            <span>📦</span> Master Data Katalag Produk
+          </h1>
+          <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">
+            Kelola data barang, harga jual Dus/Pcs, serta stok fisik di gudang.
+          </p>
+        </div>
+
         <button
-          onClick={() => setShowAddModal(true)}
-          className="bg-blue-600 hover:bg-blue-500 text-white px-4 py-2.5 rounded-xl text-xs font-bold transition shadow-lg shadow-blue-600/20 active:scale-95 flex items-center gap-1.5"
+          onClick={handleOpenAddModal}
+          className="inline-flex items-center justify-center bg-blue-600 hover:bg-blue-500 text-white text-xs sm:text-sm font-bold px-4 py-2.5 rounded-xl shadow-md transition gap-2"
         >
-          <span>+</span> Tambah Produk Baru
+          <span>➕</span> Tambah Produk Baru
         </button>
       </div>
 
-      {/* Main Container */}
-      <div className="bg-white dark:bg-slate-900 p-4 sm:p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm dark:shadow-2xl space-y-5 transition-colors">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-200 dark:border-slate-800/80 pb-4">
-          <h1 className="text-lg sm:text-xl font-bold text-slate-900 dark:text-white flex items-center gap-2">
-            <span>📦</span> Daftar Produk & Sisa Stok
-          </h1>
-          <span className="text-xs text-slate-500 dark:text-slate-400 font-medium">
-            Total: <span className="text-blue-600 dark:text-blue-400 font-bold">{products.length}</span> jenis produk
-          </span>
-        </div>
-
-        {/* Product Table */}
-        <div className="overflow-x-auto">
-          <table className="w-full min-w-[750px] text-left border-collapse text-sm">
-            <thead>
-              <tr className="bg-slate-50 dark:bg-slate-950/80 border-b border-slate-200 dark:border-slate-800 text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider">
-                <th className="p-4">Nama Produk</th>
-                <th className="p-4 text-center">Sisa Stok (Dus & Pcs)</th>
-                <th className="p-4 text-center">Aturan Jual</th>
-                <th className="p-4 text-right">Harga Dus</th>
-                <th className="p-4 text-right">Harga Pcs</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-slate-200 dark:divide-slate-800/60 text-slate-800 dark:text-slate-200">
-              {products.length === 0 ? (
-                <tr>
-                  <td colSpan={5} className="text-center py-10 text-slate-400 dark:text-slate-500 font-medium">
-                    Belum ada data produk.
-                  </td>
-                </tr>
-              ) : (
-                products.map((p) => {
-                  const stockDisplay = formatStock(p.box_stock, p.bottle_stock, p.units_per_box)
-                  const isCritical = (p.box_stock || 0) <= 1 && (p.bottle_stock || 0) === 0
-                  
-                  return (
-                    <tr key={p.id} className="hover:bg-slate-50 dark:hover:bg-slate-800/40 transition">
-                      <td className="p-4 font-semibold text-slate-900 dark:text-slate-100">{p.name}</td>
-                      <td className="p-4 text-center">
-                        <span className={`inline-block px-3 py-1 rounded-full text-xs font-bold border ${
-                          isCritical 
-                            ? 'bg-amber-50 dark:bg-amber-950/60 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-800/50' 
-                            : 'bg-emerald-50 dark:bg-emerald-950/60 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-800/50'
-                        }`}>
-                          {stockDisplay}
-                        </span>
-                      </td>
-                      <td className="p-4 text-center">
-                        <span className={`px-2.5 py-1 rounded-lg text-xs font-semibold border ${
-                          p.is_retail_allowed !== false 
-                            ? 'bg-blue-50 dark:bg-blue-950/50 text-blue-700 dark:text-blue-400 border-blue-200 dark:border-blue-800/50' 
-                            : 'bg-purple-50 dark:bg-purple-950/50 text-purple-700 dark:text-purple-400 border-purple-200 dark:border-purple-800/50'
-                        }`}>
-                          {p.is_retail_allowed !== false ? 'Bisa Dus & Pcs' : 'Hanya Dus (Grosir)'}
-                        </span>
-                      </td>
-                      <td className="p-4 text-right font-bold text-slate-900 dark:text-slate-200">
-                        Rp {(p.selling_price_per_box || 0).toLocaleString('id-ID')}
-                      </td>
-                      <td className="p-4 text-right font-bold text-slate-900 dark:text-slate-200">
-                        {p.is_retail_allowed !== false 
-                          ? `Rp ${(p.selling_price_per_bottle || 0).toLocaleString('id-ID')}` 
-                          : <span className="text-slate-400 dark:text-slate-600">-</span>
-                        }
-                      </td>
-                    </tr>
-                  )
-                })
-              )}
-            </tbody>
-          </table>
-        </div>
+      {/* Search Bar */}
+      <div className="bg-white dark:bg-slate-900 p-4 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm">
+        <input
+          type="text"
+          placeholder="🔍 Cari nama produk di katalog..."
+          value={searchTerm}
+          onChange={(e) => setSearchTerm(e.target.value)}
+          className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-4 py-2.5 text-xs sm:text-sm focus:outline-none focus:border-blue-500"
+        />
       </div>
 
-      {/* Modal Tambah Produk Baru */}
-      {showAddModal && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 dark:bg-slate-950/80 backdrop-blur-sm p-4 animate-in fade-in duration-200">
-          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl p-6 max-w-md w-full space-y-5 shadow-xl dark:shadow-2xl text-slate-900 dark:text-slate-100 transition-colors">
-            <div className="flex justify-between items-center border-b border-slate-200 dark:border-slate-800 pb-3">
-              <h2 className="text-lg font-bold text-slate-900 dark:text-white flex items-center gap-2">
-                <span>➕</span> Tambah Produk Baru
+      {/* Table Data Produk */}
+      <div className="bg-white dark:bg-slate-900 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm overflow-hidden">
+        {loading ? (
+          <div className="p-8 text-center text-xs text-slate-400">Memuat katalog produk...</div>
+        ) : filteredProducts.length === 0 ? (
+          <div className="p-8 text-center text-xs text-slate-400">Tidak ada produk ditemukan.</div>
+        ) : (
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-xs sm:text-sm">
+              <thead className="bg-slate-50 dark:bg-slate-950 text-slate-400 uppercase text-[10px] sm:text-xs font-bold tracking-wider border-b border-slate-200 dark:border-slate-800">
+                <tr>
+                  <th className="py-3 px-4">Nama Produk</th>
+                  <th className="py-3 px-4 text-center">Stok Dus</th>
+                  <th className="py-3 px-4 text-center">Stok Ecer (Pcs)</th>
+                  <th className="py-3 px-4 text-right">Harga / Dus</th>
+                  <th className="py-3 px-4 text-right">Harga / Pcs</th>
+                  <th className="py-3 px-4 text-center">Aksi</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-slate-200 dark:divide-slate-800 font-medium">
+                {filteredProducts.map((p) => (
+                  <tr key={p.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-950/50 transition">
+                    <td className="py-3.5 px-4 font-bold text-slate-900 dark:text-slate-100">
+                      📦 {p.name}
+                      <div className="text-[10px] text-slate-400 font-normal">
+                        1 Dus = {p.units_per_box || 1} Pcs
+                      </div>
+                    </td>
+                    <td className="py-3.5 px-4 text-center font-black text-blue-500">
+                      {p.box_stock || 0} Dus
+                    </td>
+                    <td className="py-3.5 px-4 text-center font-bold text-slate-400">
+                      {p.is_retail_allowed ? `${p.bottle_stock || 0} Pcs` : '❌ Tidak Ditjual Ecer'}
+                    </td>
+                    <td className="py-3.5 px-4 text-right font-bold text-emerald-500">
+                      Rp {(p.selling_price_per_box || 0).toLocaleString('id-ID')}
+                    </td>
+                    <td className="py-3.5 px-4 text-right font-bold text-slate-400">
+                      {p.is_retail_allowed
+                        ? `Rp ${(p.selling_price_per_bottle || 0).toLocaleString('id-ID')}`
+                        : '-'}
+                    </td>
+                    <td className="py-3.5 px-4 text-center">
+                      <div className="flex items-center justify-center gap-2">
+                        {/* Tombol Edit */}
+                        <button
+                          onClick={() => handleOpenEditModal(p)}
+                          className="bg-amber-500/10 hover:bg-amber-500/20 text-amber-500 border border-amber-500/30 text-xs font-bold px-2.5 py-1.5 rounded-lg transition"
+                          title="Edit Produk"
+                        >
+                          ✏️ Edit
+                        </button>
+
+                        {/* Tombol Hapus */}
+                        <button
+                          onClick={() => setDeletingProduct(p)}
+                          className="bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 border border-rose-500/30 text-xs font-bold px-2.5 py-1.5 rounded-lg transition"
+                          title="Hapus Produk"
+                        >
+                          🗑️ Hapus
+                        </button>
+                      </div>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+
+      {/* 📝 MODAL DIALOG (TAMBAH / EDIT PRODUK) */}
+      {isModalOpen && (
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden animate-in fade-in zoom-in-95">
+            <div className="p-5 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center">
+              <h2 className="text-base font-black flex items-center gap-2">
+                <span>{editingProduct ? '✏️' : '➕'}</span>
+                <span>{editingProduct ? 'Edit Data Produk' : 'Tambah Produk Baru'}</span>
               </h2>
-              <button 
-                onClick={() => setShowAddModal(false)}
-                className="text-slate-400 hover:text-slate-600 dark:hover:text-white font-bold text-lg transition"
+              <button
+                onClick={() => setIsModalOpen(false)}
+                className="text-slate-400 hover:text-white font-bold"
               >
                 ✕
               </button>
             </div>
 
-            <form onSubmit={handleAddProduct} className="space-y-4">
+            <form onSubmit={handleSubmit} className="p-5 space-y-4">
               <div>
-                <label className="block text-xs font-bold text-slate-700 dark:text-slate-400 uppercase tracking-wider mb-1.5">
-                  Nama Produk
-                </label>
-                <input 
-                  type="text" 
-                  placeholder="Contoh: Oasis 600ml / Saltcheese"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl text-sm text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition"
+                <label className="text-xs font-bold text-slate-400 block mb-1">Nama Produk *</label>
+                <input
+                  type="text"
                   required
+                  placeholder="Contoh: Oasis 600 ml"
+                  value={formData.name}
+                  onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                  className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs sm:text-sm font-semibold focus:outline-none focus:border-blue-500"
                 />
-              </div>
-
-              <div className="grid grid-cols-3 gap-3">
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-400 uppercase tracking-wider mb-1.5">
-                    Stok Dus
-                  </label>
-                  <input 
-                    type="number" 
-                    placeholder="0"
-                    value={boxStock}
-                    onChange={(e) => setBoxStock(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl text-sm text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-400 uppercase tracking-wider mb-1.5">
-                    Stok Pcs
-                  </label>
-                  <input 
-                    type="number" 
-                    placeholder="0"
-                    value={bottleStock}
-                    onChange={(e) => setBottleStock(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl text-sm text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition"
-                  />
-                </div>
-                <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-400 uppercase tracking-wider mb-1.5">
-                    Isi/Dus
-                  </label>
-                  <input 
-                    type="number" 
-                    placeholder="12"
-                    value={unitsPerBox}
-                    onChange={(e) => setUnitsPerBox(e.target.value)}
-                    className="w-full px-3 py-2 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl text-sm text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition"
-                    required
-                  />
-                </div>
               </div>
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-400 uppercase tracking-wider mb-1.5">
-                    Harga Dus (Rp)
-                  </label>
-                  <input 
-                    type="number" 
-                    placeholder="0"
-                    value={priceBox}
-                    onChange={(e) => setPriceBox(e.target.value)}
-                    className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl text-sm text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition"
-                    required
+                  <label className="text-xs font-bold text-slate-400 block mb-1">Stok Dus</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={formData.box_stock}
+                    onChange={(e) => setFormData({ ...formData, box_stock: Number(e.target.value) })}
+                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs font-bold focus:outline-none focus:border-blue-500"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs font-bold text-slate-700 dark:text-slate-400 uppercase tracking-wider mb-1.5">
-                    Harga Pcs (Rp)
-                  </label>
-                  <input 
-                    type="number" 
-                    placeholder="0"
-                    value={priceBottle}
-                    onChange={(e) => setPriceBottle(e.target.value)}
-                    className="w-full px-3.5 py-2.5 bg-slate-50 dark:bg-slate-950 border border-slate-300 dark:border-slate-800 rounded-xl text-sm text-slate-900 dark:text-white placeholder-slate-400 dark:placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 transition"
+                  <label className="text-xs font-bold text-slate-400 block mb-1">Harga / Dus (Rp)</label>
+                  <input
+                    type="number"
+                    min="0"
+                    value={formData.selling_price_per_box}
+                    onChange={(e) => setFormData({ ...formData, selling_price_per_box: Number(e.target.value) })}
+                    className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3 py-2 text-xs font-bold text-emerald-500 focus:outline-none focus:border-blue-500"
                   />
                 </div>
               </div>
 
-              <div className="flex items-center gap-2.5 pt-2">
-                <input 
-                  type="checkbox" 
-                  id="isRetailAllowed"
-                  checked={isRetailAllowed}
-                  onChange={(e) => setIsRetailAllowed(e.target.checked)}
-                  className="w-4 h-4 rounded border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-950 text-blue-600 focus:ring-blue-500 accent-blue-600 cursor-pointer"
-                />
-                <label htmlFor="isRetailAllowed" className="text-xs font-semibold text-slate-700 dark:text-slate-300 select-none cursor-pointer">
-                  Boleh dijual eceran / satuan (Pcs)?
+              {/* Opsi Penjualan Eceran */}
+              <div className="p-3.5 bg-slate-50 dark:bg-slate-950 rounded-xl border border-slate-200 dark:border-slate-800 space-y-3">
+                <label className="flex items-center gap-2 cursor-pointer">
+                  <input
+                    type="checkbox"
+                    checked={formData.is_retail_allowed}
+                    onChange={(e) => setFormData({ ...formData, is_retail_allowed: e.target.checked })}
+                    className="rounded accent-blue-600 w-4 h-4"
+                  />
+                  <span className="text-xs font-bold">Izinkan Penjualan Eceran (Pcs)</span>
                 </label>
+
+                {formData.is_retail_allowed && (
+                  <div className="grid grid-cols-3 gap-2 pt-2 border-t border-slate-200 dark:border-slate-800">
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-400 block mb-1">Isi / Dus (Pcs)</label>
+                      <input
+                        type="number"
+                        min="1"
+                        value={formData.units_per_box}
+                        onChange={(e) => setFormData({ ...formData, units_per_box: Number(e.target.value) })}
+                        className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-2 py-1.5 text-xs font-bold focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-400 block mb-1">Stok Pcs</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={formData.bottle_stock}
+                        onChange={(e) => setFormData({ ...formData, bottle_stock: Number(e.target.value) })}
+                        className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-2 py-1.5 text-xs font-bold focus:outline-none"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-[10px] font-bold text-slate-400 block mb-1">Harga / Pcs (Rp)</label>
+                      <input
+                        type="number"
+                        min="0"
+                        value={formData.selling_price_per_bottle}
+                        onChange={(e) => setFormData({ ...formData, selling_price_per_bottle: Number(e.target.value) })}
+                        className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-2 py-1.5 text-xs font-bold text-emerald-500 focus:outline-none"
+                      />
+                    </div>
+                  </div>
+                )}
               </div>
 
-              <div className="pt-4 flex gap-3">
+              <div className="flex justify-end gap-3 pt-2">
                 <button
                   type="button"
-                  onClick={() => setShowAddModal(false)}
-                  className="flex-1 bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-slate-700 dark:text-slate-300 py-2.5 rounded-xl text-xs font-bold transition border border-slate-200 dark:border-slate-700/50"
+                  onClick={() => setIsModalOpen(false)}
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-slate-400 hover:text-white"
                 >
                   Batal
                 </button>
                 <button
                   type="submit"
-                  disabled={loading}
-                  className="flex-1 bg-blue-600 hover:bg-blue-500 text-white py-2.5 rounded-xl text-xs font-bold transition shadow-lg shadow-blue-600/25 active:scale-95 disabled:opacity-50"
+                  disabled={submitting}
+                  className="bg-blue-600 hover:bg-blue-500 text-white font-bold text-xs px-5 py-2 rounded-xl shadow-md transition disabled:opacity-50"
                 >
-                  {loading ? 'Menyimpan...' : 'Simpan Produk'}
+                  {submitting ? 'Menyimpan...' : '💾 Simpan Produk'}
                 </button>
               </div>
             </form>
+          </div>
+        </div>
+      )}
+
+      {/* ⚠️ MODAL KONFIRMASI HAPUS PRODUK */}
+      {deletingProduct && (
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl w-full max-w-md p-6 space-y-4 text-center">
+            <div className="text-4xl">⚠️</div>
+            <h3 className="text-base font-black text-slate-900 dark:text-slate-100">
+              Konfirmasi Hapus Produk
+            </h3>
+            <p className="text-xs text-slate-400 leading-relaxed">
+              Apakah Anda yakin ingin menghapus produk <strong className="text-slate-100">"{deletingProduct.name}"</strong>? Data yang dihapus tidak dapat dikembalikan.
+            </p>
+            <div className="flex items-center justify-center gap-3 pt-2">
+              <button
+                onClick={() => setDeletingProduct(null)}
+                className="px-4 py-2 rounded-xl text-xs font-bold text-slate-400 hover:text-white bg-slate-100 dark:bg-slate-800"
+              >
+                Batal
+              </button>
+              <button
+                onClick={ConfirmDeleteProduct}
+                className="bg-rose-600 hover:bg-rose-500 text-white font-bold text-xs px-5 py-2 rounded-xl shadow-md transition"
+              >
+                Ya, Hapus Produk
+              </button>
+            </div>
           </div>
         </div>
       )}

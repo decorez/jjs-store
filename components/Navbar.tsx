@@ -10,6 +10,7 @@ import {
   Receipt,
   FileSpreadsheet,
   Motorbike,
+  Wallet,
   Truck,
   Package,
   BarChart3,
@@ -23,9 +24,10 @@ const navItems = [
   { name: 'Input Nota', href: '/dashboard/invoice', icon: Receipt },
   { name: 'Rekap Piutang', href: '/dashboard/sales', icon: FileSpreadsheet },
   { name: 'Tagihan Sales', href: '/dashboard/collections', icon: Motorbike },
+  { name: 'Setoran Sales', href: '/dashboard/settlement', icon: Wallet },
   { name: 'Stok Produk', href: '/dashboard/products', icon: Package },
   { name: 'Laporan', href: '/dashboard/reports', icon: BarChart3 },
-  { name: 'Rekap', href: '/dashboard/delivery', icon: Truck },
+  { name: 'Rekap Delivery', href: '/dashboard/delivery', icon: Truck },
 ]
 
 export default function Navbar() {
@@ -39,7 +41,6 @@ export default function Navbar() {
       const { data: { user } } = await supabase.auth.getUser()
       if (user?.email) {
         setUserEmail(user.email)
-        // Ambil teks sebelum tanda @ dan buat huruf depan kapital
         const rawName = user.user_metadata?.full_name || user.email.split('@')[0]
         const formattedName = rawName.charAt(0).toUpperCase() + rawName.slice(1)
         setUserName(formattedName)
@@ -89,7 +90,7 @@ export default function Navbar() {
               <Link
                 key={item.href}
                 href={item.href}
-                className={`flex items-center gap-3 px-3.5 py-3 rounded-xl font-medium text-sm transition-all ${
+                className={`flex items-center gap-3 px-3.5 py-2.5 rounded-xl font-medium text-xs sm:text-sm transition-all ${
                   isActive
                     ? 'bg-blue-600 text-white font-semibold shadow-md shadow-blue-600/20'
                     : 'text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800/60 hover:text-slate-900 dark:hover:text-white'
@@ -102,7 +103,7 @@ export default function Navbar() {
           })}
         </nav>
 
-        {/* User Info / Footer (Otomatis Sesuai Email) */}
+        {/* User Info / Footer */}
         <div className="pt-4 border-t border-slate-200 dark:border-slate-800 flex items-center justify-between">
           <div className="rounded-xl bg-slate-100 dark:bg-slate-800/60 p-2.5 flex-1 mr-2 overflow-hidden">
             <p className="font-bold text-xs text-slate-900 dark:text-slate-100 truncate">
@@ -145,7 +146,7 @@ export default function Navbar() {
             <Link
               key={item.href}
               href={item.href}
-              className={`flex flex-col items-center justify-center py-1.5 px-2 rounded-xl transition-all min-w-[60px] shrink-0 ${
+              className={`flex flex-col items-center justify-center py-1.5 px-2 rounded-xl transition-all min-w-[58px] shrink-0 ${
                 isActive
                   ? 'text-blue-600 dark:text-blue-400 font-bold scale-105'
                   : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'

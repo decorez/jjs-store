@@ -40,9 +40,8 @@ interface SavedDelivery {
 
 const VEHICLE_OPTIONS = [
   'BG 8984 ZH',
-  'BG 1234 XX',
-  'BG 5678 YY',
-  'BG 9999 ZZ',
+  'BG 8114 IF',
+  'BG 8936 IC',
 ]
 
 export default function DeliveryRekapPage() {

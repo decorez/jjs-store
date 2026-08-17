@@ -200,7 +200,28 @@ export default function DashboardPage() {
           </div>
         </Link>
 
-        {/* Menu 4: Tagihan Sales */}
+        {/* Menu 4: Tagihan Sales (Bawa Nota) */}
+        <Link
+          href="/dashboard/collection"
+          className="group bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 rounded-2xl shadow-sm hover:border-blue-500 transition transform hover:-translate-y-0.5 space-y-3"
+        >
+          <div className="flex items-center justify-between">
+            <span className="text-2xl">🏍️</span>
+            <span className="text-xs bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 px-2.5 py-1 rounded-full font-semibold">
+              Penugasan
+            </span>
+          </div>
+          <div>
+            <h3 className="font-bold text-lg text-slate-900 dark:text-white group-hover:text-blue-600">
+              Tagihan Sales
+            </h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+              Pilih nota tagihan yang akan diserahterimakan & dibawa sales untuk ditagih hari ini.
+            </p>
+          </div>
+        </Link>
+
+        {/* Menu 5: Setoran Sales (Terima Uang Tunai) */}
         <Link
           href="/dashboard/settlement"
           className="group bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 rounded-2xl shadow-sm hover:border-blue-500 transition transform hover:-translate-y-0.5 space-y-3"
@@ -213,15 +234,15 @@ export default function DashboardPage() {
           </div>
           <div>
             <h3 className="font-bold text-lg text-slate-900 dark:text-white group-hover:text-blue-600">
-              Tagihan & Setoran Sales
+              Setoran Sales
             </h3>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
-              Rekap nota yang dibawa sales keliling dan pantau setoran uang fisik yang diterima.
+              Proses uang tunai yang disetorkan sales, perbarui janji bayar, dan cetak bukti setoran.
             </p>
           </div>
         </Link>
 
-        {/* Menu 5: Stok Produk */}
+        {/* Menu 6: Stok Produk */}
         <Link
           href="/dashboard/products"
           className="group bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 rounded-2xl shadow-sm hover:border-blue-500 transition transform hover:-translate-y-0.5 space-y-3"
@@ -242,7 +263,7 @@ export default function DashboardPage() {
           </div>
         </Link>
 
-        {/* Menu 6: Laporan Keuangan */}
+        {/* Menu 7: Laporan Keuangan */}
         <Link
           href="/dashboard/reports"
           className="group bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 rounded-2xl shadow-sm hover:border-blue-500 transition transform hover:-translate-y-0.5 space-y-3"
@@ -263,7 +284,7 @@ export default function DashboardPage() {
           </div>
         </Link>
 
-        {/* Menu 7: Delivery / Surat Jalan */}
+        {/* Menu 8: Delivery / Surat Jalan */}
         <Link
           href="/dashboard/delivery"
           className="group bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800/80 p-5 rounded-2xl shadow-sm hover:shadow-md border border-slate-200 dark:border-slate-800 transition transform hover:-translate-y-0.5 space-y-3 col-span-1 sm:col-span-2 lg:col-span-3 duration-200"

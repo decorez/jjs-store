@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
@@ -20,7 +20,6 @@ interface InvoiceItem {
   price: number
 }
 
-// Interface Toast Notifikasi
 interface ToastState {
   message: string
   type: 'error' | 'success' | 'warning'
@@ -35,23 +34,27 @@ export default function InvoicePage() {
   const [loadingData, setLoadingData] = useState(true)
   const [submitting, setSubmitting] = useState(false)
 
-  // 🔔 Custom Toast State (Menggantikan Alert Browser)
+  // 🔔 Custom Toast State
   const [toast, setToast] = useState<ToastState | null>(null)
 
-  // Helper untuk menampilkan Toast
   const showToast = (message: string, type: 'error' | 'success' | 'warning' = 'error') => {
     setToast({ message, type })
-    setTimeout(() => {
-      setToast(null)
-    }, 4000) // Toast otomatis hilang setelah 4 detik
+    setTimeout(() => setToast(null), 4000)
   }
 
-  // Form State
-  const [selectedCustomer, setSelectedCustomer] = useState('')
-  const [customCustomerName, setCustomCustomerName] = useState('')
+  // Form State Tanggal
   const [transactionDate, setTransactionDate] = useState(
     new Date().toISOString().split('T')[0]
   )
+
+  // 🔍 State Searchable Customer Dropdown
+  const [customerSearchQuery, setCustomerSearchQuery] = useState('')
+  const [isCustomerDropdownOpen, setIsCustomerDropdownOpen] = useState(false)
+  const [selectedCustomerData, setSelectedCustomerData] = useState<Customer | null>(null)
+  const [isManualCustomer, setIsManualCustomer] = useState(false)
+  const [customCustomerName, setCustomCustomerName] = useState('')
+  const [customCustomerAddress, setCustomCustomerAddress] = useState('')
+  const customerDropdownRef = useRef<HTMLDivElement>(null)
 
   // State Rincian Barang (Multi-Item)
   const [items, setItems] = useState<InvoiceItem[]>([
@@ -61,28 +64,17 @@ export default function InvoicePage() {
   // State Pembayaran
   const [paidAmount, setPaidAmount] = useState<number | ''>(0)
 
-  // Helper Presisi Mengambil Harga Dus (selling_price_per_box)
-  const getBoxPrice = (p: any): number => {
-    if (!p) return 0
-    return Number(p.selling_price_per_box ?? p.harga_dus ?? 0)
-  }
+  // Helper Presisi Mengambil Harga Dus & Pcs
+  const getBoxPrice = (p: any): number => Number(p?.selling_price_per_box ?? p?.harga_dus ?? 0)
+  const getPcsPrice = (p: any): number => Number(p?.selling_price_per_bottle ?? p?.harga_pcs ?? 0)
 
-  // Helper Presisi Mengambil Harga Pcs (selling_price_per_bottle)
-  const getPcsPrice = (p: any): number => {
-    if (!p) return 0
-    return Number(p.selling_price_per_bottle ?? p.harga_pcs ?? 0)
-  }
-
-  // Helper Presisi Cek Izin Eceran (is_retail_allowed)
   const canSellPcs = (p?: any): boolean => {
     if (!p) return true
-    if (typeof p.is_retail_allowed === 'boolean') {
-      return p.is_retail_allowed
-    }
+    if (typeof p.is_retail_allowed === 'boolean') return p.is_retail_allowed
     return getPcsPrice(p) > 0
   }
 
-  // Fetch Master Data Toko & Produk
+  // Fetch Master Data
   useEffect(() => {
     async function fetchMasterData() {
       setLoadingData(true)
@@ -99,12 +91,47 @@ export default function InvoicePage() {
     fetchMasterData()
   }, [])
 
-  // Handler Tambah Baris Barang
+  // Event handler untuk menutup dropdown toko saat klik di luar
+  useEffect(() => {
+    function handleClickOutside(event: MouseEvent) {
+      if (customerDropdownRef.current && !customerDropdownRef.current.contains(event.target as Node)) {
+        setIsCustomerDropdownOpen(false)
+      }
+    }
+    document.addEventListener('mousedown', handleClickOutside)
+    return () => document.removeEventListener('mousedown', handleClickOutside)
+  }, [])
+
+  // Filter Toko Berdasarkan Nama, Alamat, atau No HP
+  const filteredCustomers = customers.filter(
+    (c) =>
+      c.name.toLowerCase().includes(customerSearchQuery.toLowerCase()) ||
+      (c.address && c.address.toLowerCase().includes(customerSearchQuery.toLowerCase())) ||
+      (c.phone && c.phone.includes(customerSearchQuery))
+  )
+
+  // Handler Pilih Toko Terdaftar
+  const handleSelectCustomer = (customer: Customer) => {
+    setSelectedCustomerData(customer)
+    setCustomerSearchQuery(customer.name)
+    setIsManualCustomer(false)
+    setIsCustomerDropdownOpen(false)
+  }
+
+  // Handler Reset Pilihan Toko
+  const handleClearCustomer = () => {
+    setSelectedCustomerData(null)
+    setCustomerSearchQuery('')
+    setIsManualCustomer(false)
+    setCustomCustomerName('')
+    setCustomCustomerAddress('')
+  }
+
+  // Handler Item Barang
   const handleAddItem = () => {
     setItems([...items, { product_id: '', product_name: '', unit: 'Dus', quantity: 1, price: 0 }])
   }
 
-  // Handler Hapus Baris Barang
   const handleRemoveItem = (index: number) => {
     if (items.length === 1) {
       showToast('Minimal harus ada 1 barang dalam nota!', 'warning')
@@ -113,7 +140,6 @@ export default function InvoicePage() {
     setItems(items.filter((_, i) => i !== index))
   }
 
-  // Handler Perubahan Item Barang
   const handleItemChange = (index: number, field: keyof InvoiceItem, value: any) => {
     const updatedItems = [...items]
     const currentItem = updatedItems[index]
@@ -166,7 +192,7 @@ export default function InvoicePage() {
     setItems(updatedItems)
   }
 
-  // Hitung Total Nota Otomatis
+  // Hitung Total Nota
   const totalPrice = items.reduce((sum, item) => {
     const qty = Number(item.quantity) || 0
     const prc = Number(item.price) || 0
@@ -176,23 +202,28 @@ export default function InvoicePage() {
   const paidNum = Number(paidAmount) || 0
   const remainingNum = Math.max(0, totalPrice - paidNum)
 
-  // Submit Handler dengan Pemotongan Stok
+  // Submit Handler
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
-    // 🛑 Validasi Custom Toko / Pelanggan
-    if (!selectedCustomer) {
-      showToast('⚠️ Silakan pilih Toko / Pelanggan terlebih dahulu!', 'warning')
-      return
-    }
+    // 🛑 Validasi Toko / Pelanggan
+    let finalCustomerName = ''
+    let finalCustomerAddress = ''
+    let finalCustomerId: number | null = null
 
-    const finalCustomerName =
-      selectedCustomer === 'OTHER'
-        ? customCustomerName.trim()
-        : selectedCustomer.trim()
-
-    if (!finalCustomerName) {
-      showToast('⚠️ Silakan isi nama toko/pelanggan baru!', 'warning')
+    if (isManualCustomer) {
+      if (!customCustomerName.trim()) {
+        showToast('⚠️ Silakan isi nama toko/pelanggan baru!', 'warning')
+        return
+      }
+      finalCustomerName = customCustomerName.trim()
+      finalCustomerAddress = customCustomerAddress.trim()
+    } else if (selectedCustomerData) {
+      finalCustomerId = selectedCustomerData.id
+      finalCustomerName = selectedCustomerData.name
+      finalCustomerAddress = selectedCustomerData.address || ''
+    } else {
+      showToast('⚠️ Silakan cari dan pilih Toko / Pelanggan terlebih dahulu!', 'warning')
       return
     }
 
@@ -203,7 +234,7 @@ export default function InvoicePage() {
       return
     }
 
-    // 🛑 Validasi Kecukupan Stok Sebelum Disimpan
+    // Validasi Kecukupan Stok
     for (const item of validItems) {
       if (item.product_id === 'MANUAL') continue
 
@@ -227,12 +258,10 @@ export default function InvoicePage() {
 
     setSubmitting(true)
 
-    // Format Ringkasan Deskripsi Produk
     const productSummary = validItems
       .map(item => `${item.quantity} ${item.unit} ${item.product_name}`)
       .join(', ')
 
-    // Status Pembayaran
     let paymentStatus = 'UNPAID'
     if (paidNum >= totalPrice && totalPrice > 0) {
       paymentStatus = 'PAID'
@@ -240,7 +269,6 @@ export default function InvoicePage() {
       paymentStatus = 'PARTIAL'
     }
 
-    // Riwayat DP / Pembayaran Awal
     const initialHistory =
       paidNum > 0
         ? [
@@ -252,10 +280,12 @@ export default function InvoicePage() {
           ]
         : []
 
-    // 📝 Simpan Transaksi Ke Database
+    // 📝 Simpan Transaksi Ke Database (dengan ID & Alamat)
     const { error: txError } = await supabase.from('transactions').insert([
       {
+        customer_id: finalCustomerId,
         customer_name: finalCustomerName,
+        customer_address: finalCustomerAddress,
         transaction_date: transactionDate,
         product_name: productSummary,
         total_price: totalPrice,
@@ -272,7 +302,7 @@ export default function InvoicePage() {
       return
     }
 
-    // 📦 Potong Stok Barang di Tabel `products`
+    // 📦 Potong Stok Barang
     for (const item of validItems) {
       if (item.product_id === 'MANUAL') continue
 
@@ -312,7 +342,6 @@ export default function InvoicePage() {
     setSubmitting(false)
     showToast('✅ Nota transaksi berhasil disimpan & stok otomatis berkurang!', 'success')
     
-    // Redirect ke riwayat penjualan setelah singkat
     setTimeout(() => {
       router.push('/dashboard/sales')
     }, 1500)
@@ -321,7 +350,7 @@ export default function InvoicePage() {
   return (
     <div className="p-3.5 sm:p-6 max-w-5xl mx-auto space-y-6 text-slate-900 dark:text-slate-100 relative">
       
-      {/* 🔔 CUSTOM TOAST NOTIFICATION COMPONENT */}
+      {/* 🔔 CUSTOM TOAST NOTIFICATION */}
       {toast && (
         <div className="fixed top-5 right-5 z-50 max-w-md animate-bounce-short">
           <div
@@ -340,6 +369,7 @@ export default function InvoicePage() {
               {toast.message}
             </div>
             <button
+              type="button"
               onClick={() => setToast(null)}
               className="text-slate-400 hover:text-white font-bold text-xs"
             >
@@ -365,9 +395,8 @@ export default function InvoicePage() {
         </p>
       </div>
 
-      {/* Form dengan `noValidate` untuk Mematikan Tooltip Browser */}
       <form onSubmit={handleSubmit} noValidate className="space-y-6">
-        {/* Card 1: Informasi Toko & Tanggal */}
+        {/* Card 1: Informasi Toko (Searchable Autocomplete) & Tanggal */}
         <div className="bg-white dark:bg-slate-900 p-5 sm:p-6 rounded-2xl border border-slate-200 dark:border-slate-800 shadow-sm space-y-4">
           <h2 className="text-sm font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
             <span>🏪</span> Informasi Toko & Tanggal
@@ -386,42 +415,131 @@ export default function InvoicePage() {
               />
             </div>
 
-            <div>
+            {/* SEARCHABLE COMBOBOX TOKO */}
+            <div className="relative" ref={customerDropdownRef}>
               <label className="text-xs font-bold text-slate-500 block mb-1.5">
                 Pilih Toko / Pelanggan <span className="text-rose-500">*</span>
               </label>
-              {loadingData ? (
-                <div className="text-xs text-slate-400 py-2.5">Memuat data toko...</div>
-              ) : (
-                <select
-                  value={selectedCustomer}
-                  onChange={(e) => setSelectedCustomer(e.target.value)}
-                  className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-sm font-semibold focus:outline-none focus:border-blue-500"
-                >
-                  <option value="">-- Pilih Toko Terdaftar --</option>
-                  {customers.map((c) => (
-                    <option key={c.id} value={c.name}>
-                      🏪 {c.name} {c.phone ? `(${c.phone})` : ''}
-                    </option>
-                  ))}
-                  <option value="OTHER">➕ + Input Manual / Toko Baru</option>
-                </select>
+              
+              <div className="relative flex items-center">
+                <input
+                  type="text"
+                  placeholder="🔍 Ketik nama toko, alamat, atau HP..."
+                  value={customerSearchQuery}
+                  onChange={(e) => {
+                    setCustomerSearchQuery(e.target.value)
+                    setIsCustomerDropdownOpen(true)
+                    if (selectedCustomerData) setSelectedCustomerData(null)
+                  }}
+                  onFocus={() => setIsCustomerDropdownOpen(true)}
+                  className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2.5 text-sm font-semibold focus:outline-none focus:border-blue-500 pr-10"
+                />
+                {(customerSearchQuery || selectedCustomerData || isManualCustomer) && (
+                  <button
+                    type="button"
+                    onClick={handleClearCustomer}
+                    className="absolute right-3 text-slate-400 hover:text-slate-200 font-bold text-xs"
+                    title="Reset Pilihan"
+                  >
+                    ✕
+                  </button>
+                )}
+              </div>
+
+              {/* Dropdown Floating Result */}
+              {isCustomerDropdownOpen && (
+                <div className="absolute z-30 top-full left-0 right-0 mt-1 bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-xl shadow-2xl max-h-60 overflow-y-auto divide-y divide-slate-100 dark:divide-slate-800">
+                  {loadingData ? (
+                    <div className="p-3 text-xs text-slate-400 text-center">Memuat daftar toko...</div>
+                  ) : filteredCustomers.length > 0 ? (
+                    filteredCustomers.map((c) => (
+                      <div
+                        key={c.id}
+                        onClick={() => handleSelectCustomer(c)}
+                        className="p-3 hover:bg-blue-50 dark:hover:bg-blue-950/50 cursor-pointer transition flex items-start justify-between gap-2"
+                      >
+                        <div>
+                          <div className="text-xs sm:text-sm font-bold text-slate-900 dark:text-slate-100">
+                            🏪 {c.name}
+                          </div>
+                          {c.address && (
+                            <div className="text-[11px] text-slate-400">📍 {c.address}</div>
+                          )}
+                        </div>
+                        {c.phone && (
+                          <span className="text-[10px] bg-slate-100 dark:bg-slate-800 text-slate-400 px-2 py-0.5 rounded-full font-mono">
+                            📞 {c.phone}
+                          </span>
+                        )}
+                      </div>
+                    ))
+                  ) : (
+                    <div className="p-3 text-xs text-slate-400 text-center">
+                      Toko "{customerSearchQuery}" tidak ditemukan.
+                    </div>
+                  )}
+
+                  <div
+                    onClick={() => {
+                      setIsManualCustomer(true)
+                      setSelectedCustomerData(null)
+                      setIsCustomerDropdownOpen(false)
+                    }}
+                    className="p-3 bg-blue-50/50 dark:bg-blue-950/30 hover:bg-blue-100 dark:hover:bg-blue-900/50 cursor-pointer transition text-xs font-bold text-blue-600 dark:text-blue-400 flex items-center gap-2"
+                  >
+                    <span>➕</span> + Input Toko Baru / Manual
+                  </div>
+                </div>
               )}
             </div>
           </div>
 
-          {selectedCustomer === 'OTHER' && (
-            <div className="bg-blue-50/50 dark:bg-blue-950/30 p-4 rounded-xl border border-blue-200 dark:border-blue-900/50">
-              <label className="text-xs font-bold text-blue-600 dark:text-blue-400 block mb-1">
-                Nama Toko Baru (Input Manual)
-              </label>
-              <input
-                type="text"
-                placeholder="Ketik nama toko..."
-                value={customCustomerName}
-                onChange={(e) => setCustomCustomerName(e.target.value)}
-                className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-sm focus:outline-none focus:border-blue-500"
-              />
+          {/* Badge Toko Terpilih */}
+          {selectedCustomerData && (
+            <div className="bg-emerald-500/10 border border-emerald-500/20 p-3 rounded-xl flex items-center justify-between">
+              <div className="text-xs">
+                <span className="font-bold text-emerald-500 block">✓ Toko Terpilih:</span>
+                <strong className="text-slate-900 dark:text-slate-100">{selectedCustomerData.name}</strong>
+                {selectedCustomerData.address && (
+                  <span className="text-slate-400 block text-[11px]">📍 {selectedCustomerData.address}</span>
+                )}
+              </div>
+              <button
+                type="button"
+                onClick={handleClearCustomer}
+                className="text-xs text-slate-400 hover:text-rose-500 font-bold px-2 py-1"
+              >
+                Ganti
+              </button>
+            </div>
+          )}
+
+          {/* Form Input Toko Baru (Manual) */}
+          {isManualCustomer && (
+            <div className="bg-blue-50/50 dark:bg-blue-950/30 p-4 rounded-xl border border-blue-200 dark:border-blue-900/50 space-y-3">
+              <div className="text-xs font-bold text-blue-600 dark:text-blue-400">📝 Form Toko Baru (Manual)</div>
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 block mb-1">Nama Toko Baru *</label>
+                  <input
+                    type="text"
+                    placeholder="Contoh: Toko Barokah"
+                    value={customCustomerName}
+                    onChange={(e) => setCustomCustomerName(e.target.value)}
+                    className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+                <div>
+                  <label className="text-[10px] font-bold text-slate-400 block mb-1">Alamat Toko</label>
+                  <input
+                    type="text"
+                    placeholder="Contoh: Jl. Merdeka No. 10"
+                    value={customCustomerAddress}
+                    onChange={(e) => setCustomCustomerAddress(e.target.value)}
+                    className="w-full bg-white dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-xs focus:outline-none focus:border-blue-500"
+                  />
+                </div>
+              </div>
             </div>
           )}
         </div>
@@ -452,7 +570,6 @@ export default function InvoicePage() {
                   key={index}
                   className="bg-slate-50 dark:bg-slate-950/60 p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 grid grid-cols-1 md:grid-cols-12 gap-3 items-center"
                 >
-                  {/* Select Produk Master / Custom */}
                   <div className="md:col-span-4 space-y-1">
                     <label className="text-[10px] font-bold text-slate-400 block md:hidden">
                       Produk #{index + 1}
@@ -463,13 +580,11 @@ export default function InvoicePage() {
                       className="w-full bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-lg px-3 py-2 text-xs font-semibold focus:outline-none focus:border-blue-500"
                     >
                       <option value="">-- Pilih Barang dari Katalog --</option>
-                      {productsList.map((p) => {
-                        return (
-                          <option key={p.id} value={p.id}>
-                            📦 {p.name} (Stok: {p.box_stock || 0} Dus)
-                          </option>
-                        )
-                      })}
+                      {productsList.map((p) => (
+                        <option key={p.id} value={p.id}>
+                          📦 {p.name} (Stok: {p.box_stock || 0} Dus)
+                        </option>
+                      ))}
                       <option value="MANUAL">✍️ Input Nama Barang Custom</option>
                     </select>
 
@@ -484,7 +599,6 @@ export default function InvoicePage() {
                     )}
                   </div>
 
-                  {/* Satuan (Dus / Pcs) */}
                   <div className="md:col-span-2">
                     <label className="text-[10px] font-bold text-slate-400 block mb-1">Satuan</label>
                     <select
@@ -498,7 +612,6 @@ export default function InvoicePage() {
                     </select>
                   </div>
 
-                  {/* Quantity */}
                   <div className="md:col-span-1">
                     <label className="text-[10px] font-bold text-slate-400 block mb-1">Qty</label>
                     <input
@@ -510,7 +623,6 @@ export default function InvoicePage() {
                     />
                   </div>
 
-                  {/* Harga Satuan */}
                   <div className="md:col-span-2">
                     <label className="text-[10px] font-bold text-slate-400 block mb-1">Harga (Rp)</label>
                     <input
@@ -522,7 +634,6 @@ export default function InvoicePage() {
                     />
                   </div>
 
-                  {/* Subtotal */}
                   <div className="md:col-span-2 text-right">
                     <span className="text-[10px] font-bold text-slate-400 block mb-1">Subtotal</span>
                     <span className="text-xs font-black text-blue-600 dark:text-blue-400">
@@ -530,7 +641,6 @@ export default function InvoicePage() {
                     </span>
                   </div>
 
-                  {/* Tombol Hapus */}
                   <div className="md:col-span-1 text-center">
                     <button
                       type="button"
