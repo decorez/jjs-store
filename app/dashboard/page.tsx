@@ -86,9 +86,12 @@ export default function DashboardPage() {
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-3.5">
         {/* Metric 1: Total Omzet */}
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl shadow-sm">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-            Total Omzet
-          </span>
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+              Total Omzet
+            </span>
+            <span className="text-sm">💰</span>
+          </div>
           <span className="text-lg sm:text-xl font-black text-blue-600 dark:text-blue-400 block mt-1">
             {loading ? '...' : `Rp ${totalOmzet.toLocaleString('id-ID')}`}
           </span>
@@ -96,9 +99,12 @@ export default function DashboardPage() {
 
         {/* Metric 2: Sisa Piutang */}
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl shadow-sm">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-            Sisa Piutang Toko
-          </span>
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+              Sisa Piutang Toko
+            </span>
+            <span className="text-sm">⏳</span>
+          </div>
           <span className="text-lg sm:text-xl font-black text-amber-600 dark:text-amber-400 block mt-1">
             {loading ? '...' : `Rp ${totalPiutang.toLocaleString('id-ID')}`}
           </span>
@@ -106,9 +112,12 @@ export default function DashboardPage() {
 
         {/* Metric 3: Total Toko Terdaftar */}
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl shadow-sm">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-            Toko Terdaftar
-          </span>
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+              Toko Terdaftar
+            </span>
+            <span className="text-sm">🏪</span>
+          </div>
           <span className="text-lg sm:text-xl font-black text-emerald-600 dark:text-emerald-400 block mt-1">
             {loading ? '...' : `${customersCount} Toko`}
           </span>
@@ -116,21 +125,24 @@ export default function DashboardPage() {
 
         {/* Metric 4: Toko Ada Utang */}
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-4 rounded-2xl shadow-sm">
-          <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-            Toko Menunggak
-          </span>
+          <div className="flex items-center justify-between">
+            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">
+              Toko Menunggak
+            </span>
+            <span className="text-sm">⚠️</span>
+          </div>
           <span className="text-lg sm:text-xl font-black text-rose-600 dark:text-rose-400 block mt-1">
             {loading ? '...' : `${delinquentCount} Toko`}
           </span>
         </div>
       </div>
 
-      {/* Grid Menu Utama / Navigation Cards (Lengkap 6 Menu) */}
+      {/* Grid Menu Utama / Navigation Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4">
         {/* Menu 1: Kelola Toko / Pelanggan */}
         <Link
           href="/dashboard/customers"
-          className="group bg-gradient-to-br from-blue-600 to-indigo-700 p-5 rounded-2xl text-white shadow-lg shadow-blue-500/10 hover:shadow-blue-500/25 transition transform hover:-translate-y-0.5 space-y-3"
+          className="group bg-blue-600 hover:bg-blue-700 p-5 rounded-2xl text-white shadow-lg shadow-blue-500/10 hover:shadow-blue-500/25 transition transform hover:-translate-y-0.5 space-y-3"
         >
           <div className="flex items-center justify-between">
             <span className="text-2xl">🏪</span>
@@ -194,7 +206,7 @@ export default function DashboardPage() {
           className="group bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 rounded-2xl shadow-sm hover:border-blue-500 transition transform hover:-translate-y-0.5 space-y-3"
         >
           <div className="flex items-center justify-between">
-            <span className="text-2xl">🚚</span>
+            <span className="text-2xl">💼</span>
             <span className="text-xs bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-300 px-2.5 py-1 rounded-full font-semibold">
               Setoran
             </span>
@@ -247,6 +259,32 @@ export default function DashboardPage() {
             </h3>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
               Laporan akumulasi omzet keseluruhan, realisasi kas masuk, dan ringkasan tagihan.
+            </p>
+          </div>
+        </Link>
+
+        {/* Menu 7: Delivery / Surat Jalan */}
+        <Link
+          href="/dashboard/delivery"
+          className="group bg-white dark:bg-slate-900 hover:bg-slate-50 dark:hover:bg-slate-800/80 p-5 rounded-2xl shadow-sm hover:shadow-md border border-slate-200 dark:border-slate-800 transition transform hover:-translate-y-0.5 space-y-3 col-span-1 sm:col-span-2 lg:col-span-3 duration-200"
+        >
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className="text-2xl">🚚</span>
+              <span className="text-xs font-semibold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700 px-2.5 py-1 rounded-full">
+                Pengiriman
+              </span>
+            </div>
+            <span className="text-xs font-bold text-blue-600 dark:text-blue-400 group-hover:translate-x-1 transition">
+              Buka Menu →
+            </span>
+          </div>
+          <div>
+            <h3 className="font-bold text-lg text-slate-900 dark:text-white group-hover:text-blue-600 dark:group-hover:text-blue-400 transition-colors">
+              Surat Jalan & Rekap Muatan Hari Ini
+            </h3>
+            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">
+              Kelola penugasan driver, helper, dan rekapitulasi muatan armada pengiriman.
             </p>
           </div>
         </Link>
