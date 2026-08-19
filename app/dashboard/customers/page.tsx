@@ -52,7 +52,10 @@ export default function CustomersPage() {
     // Ambil data toko & transaksi untuk rekap total belanja & piutang
     const [resCust, resTx] = await Promise.all([
       supabase.from('customers').select('*').order('name', { ascending: true }),
-      supabase.from('transactions').select('customer_name, total_price, paid_amount'),
+      // 🟢 1. Ambil SEMUA transaksi (jangan pakai .neq di Supabase agar data bernilai NULL tidak hilang)
+      supabase
+        .from('transactions')
+        .select('customer_name, total_price, paid_amount, payment_status'),
     ])
 
     if (resCust.error) {
@@ -66,9 +69,13 @@ export default function CustomersPage() {
 
     // Agregasi statistik nota, belanja, dan piutang per pelanggan
     const combined: CustomerWithStats[] = custData.map((cust) => {
+      // 🟢 2. Filter aman di JavaScript: Hanya buang transaksi yang berstatus 'CANCELLED'
       const myTxs = txData.filter(
-        (tx) => tx.customer_name?.toLowerCase().trim() === cust.name?.toLowerCase().trim()
+        (tx) =>
+          tx.customer_name?.toLowerCase().trim() === cust.name?.toLowerCase().trim() &&
+          tx.payment_status !== 'CANCELLED'
       )
+
       const totalNota = myTxs.length
       const totalBelanja = myTxs.reduce((sum, tx) => sum + (tx.total_price || 0), 0)
       const sisaPiutang = myTxs.reduce(

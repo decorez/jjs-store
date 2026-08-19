@@ -23,7 +23,7 @@ const navItems = [
   { name: 'Pelanggan', href: '/dashboard/customers', icon: Store },
   { name: 'Input Nota', href: '/dashboard/invoice', icon: Receipt },
   { name: 'Rekap Piutang', href: '/dashboard/sales', icon: FileSpreadsheet },
-  { name: 'Tagihan Sales', href: '/dashboard/collections', icon: Motorbike },
+  { name: 'Tagihan', href: '/dashboard/collections', icon: Motorbike },
   { name: 'Setoran Sales', href: '/dashboard/settlement', icon: Wallet },
   { name: 'Stok Produk', href: '/dashboard/products', icon: Package },
   { name: 'Laporan', href: '/dashboard/reports', icon: BarChart3 },

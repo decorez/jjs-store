@@ -30,6 +30,11 @@ export default function ProductsMasterPage() {
   const [editingProduct, setEditingProduct] = useState<Product | null>(null)
   const [submitting, setSubmitting] = useState(false)
 
+  // State Modal Restock (Barang Masuk)
+  const [restockProduct, setRestockProduct] = useState<Product | null>(null)
+  const [restockBox, setRestockBox] = useState<number>(0)
+  const [restockBottle, setRestockBottle] = useState<number>(0)
+
   // State Confirmation Modal (Hapus)
   const [deletingProduct, setDeletingProduct] = useState<Product | null>(null)
 
@@ -102,7 +107,51 @@ export default function ProductsMasterPage() {
     setIsModalOpen(true)
   }
 
-  // Submit Handler (Tambah / Update)
+  // Buka Modal Restock / Barang Masuk
+  const handleOpenRestockModal = (product: Product) => {
+    setRestockProduct(product)
+    setRestockBox(0)
+    setRestockBottle(0)
+  }
+
+  // Submit Restock (Penambahan Stok Otomatis)
+  const handleRestockSubmit = async (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!restockProduct) return
+
+    if (restockBox <= 0 && restockBottle <= 0) {
+      showToast('⚠️ Masukkan jumlah barang masuk minimal 1 Dus atau 1 Pcs!', 'warning')
+      return
+    }
+
+    setSubmitting(true)
+
+    const newBoxStock = (restockProduct.box_stock || 0) + Number(restockBox)
+    const newBottleStock = (restockProduct.bottle_stock || 0) + Number(restockBottle)
+
+    const { error } = await supabase
+      .from('products')
+      .update({
+        box_stock: newBoxStock,
+        bottle_stock: newBottleStock,
+      })
+      .eq('id', restockProduct.id)
+
+    if (error) {
+      showToast('Gagal menambahkan stok: ' + error.message, 'error')
+    } else {
+      showToast(
+        `✅ Stok "${restockProduct.name}" berhasil ditambahkan (+${restockBox} Dus)!`,
+        'success'
+      )
+      setRestockProduct(null)
+      fetchProducts()
+    }
+
+    setSubmitting(false)
+  }
+
+  // Submit Handler (Tambah / Update Produk)
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
@@ -124,7 +173,6 @@ export default function ProductsMasterPage() {
     }
 
     if (editingProduct) {
-      // PROSES UPDATE
       const { error } = await supabase
         .from('products')
         .update(payload)
@@ -138,7 +186,6 @@ export default function ProductsMasterPage() {
         fetchProducts()
       }
     } else {
-      // PROSES SIMPAN BARU
       const { error } = await supabase.from('products').insert([payload])
 
       if (error) {
@@ -209,10 +256,10 @@ export default function ProductsMasterPage() {
             ← Kembali ke Dashboard
           </Link>
           <h1 className="text-xl sm:text-2xl font-black flex items-center gap-2">
-            <span>📦</span> Master Data Katalag Produk
+            <span>📦</span> Master Data Katalog Produk
           </h1>
           <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">
-            Kelola data barang, harga jual Dus/Pcs, serta stok fisik di gudang.
+            Kelola data barang, harga jual Dus/Pcs, serta input barang masuk gudang.
           </p>
         </div>
 
@@ -267,7 +314,7 @@ export default function ProductsMasterPage() {
                       {p.box_stock || 0} Dus
                     </td>
                     <td className="py-3.5 px-4 text-center font-bold text-slate-400">
-                      {p.is_retail_allowed ? `${p.bottle_stock || 0} Pcs` : '❌ Tidak Ditjual Ecer'}
+                      {p.is_retail_allowed ? `${p.bottle_stock || 0} Pcs` : '❌ Tidak Dijual Ecer'}
                     </td>
                     <td className="py-3.5 px-4 text-right font-bold text-emerald-500">
                       Rp {(p.selling_price_per_box || 0).toLocaleString('id-ID')}
@@ -279,6 +326,15 @@ export default function ProductsMasterPage() {
                     </td>
                     <td className="py-3.5 px-4 text-center">
                       <div className="flex items-center justify-center gap-2">
+                        {/* 📥 Tombol Cepat Barang Masuk / Restock */}
+                        <button
+                          onClick={() => handleOpenRestockModal(p)}
+                          className="bg-emerald-500/10 hover:bg-emerald-500/20 text-emerald-500 border border-emerald-500/30 text-xs font-bold px-2.5 py-1.5 rounded-lg transition"
+                          title="Input Barang Masuk"
+                        >
+                          📥 Restock
+                        </button>
+
                         {/* Tombol Edit */}
                         <button
                           onClick={() => handleOpenEditModal(p)}
@@ -294,7 +350,7 @@ export default function ProductsMasterPage() {
                           className="bg-rose-500/10 hover:bg-rose-500/20 text-rose-500 border border-rose-500/30 text-xs font-bold px-2.5 py-1.5 rounded-lg transition"
                           title="Hapus Produk"
                         >
-                          🗑️ Hapus
+                          🗑️
                         </button>
                       </div>
                     </td>
@@ -305,6 +361,101 @@ export default function ProductsMasterPage() {
           </div>
         )}
       </div>
+
+      {/* 📥 MODAL INPUT BARANG MASUK / RESTOCK */}
+      {restockProduct && (
+        <div className="fixed inset-0 z-50 bg-slate-950/70 backdrop-blur-sm flex items-center justify-center p-4">
+          <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 rounded-2xl shadow-2xl w-full max-w-md overflow-hidden animate-in fade-in zoom-in-95">
+            <div className="p-5 border-b border-slate-200 dark:border-slate-800 flex justify-between items-center bg-emerald-500/5">
+              <h2 className="text-base font-black flex items-center gap-2 text-emerald-500">
+                <span>📥</span>
+                <span>Barang Masuk: {restockProduct.name}</span>
+              </h2>
+              <button
+                onClick={() => setRestockProduct(null)}
+                className="text-slate-400 hover:text-white font-bold"
+              >
+                ✕
+              </button>
+            </div>
+
+            <form onSubmit={handleRestockSubmit} className="p-5 space-y-4">
+              {/* Ringkasan Stok Saat Ini */}
+              <div className="bg-slate-50 dark:bg-slate-950 p-3 rounded-xl border border-slate-200 dark:border-slate-800 grid grid-cols-2 text-center">
+                <div>
+                  <span className="text-[10px] text-slate-400 font-bold block">Stok Dus Saat Ini</span>
+                  <span className="text-sm font-black text-blue-500">{restockProduct.box_stock || 0} Dus</span>
+                </div>
+                {restockProduct.is_retail_allowed && (
+                  <div>
+                    <span className="text-[10px] text-slate-400 font-bold block">Stok Pcs Saat Ini</span>
+                    <span className="text-sm font-black text-slate-300">{restockProduct.bottle_stock || 0} Pcs</span>
+                  </div>
+                )}
+              </div>
+
+              {/* Input Tambahan Masuk */}
+              <div className="space-y-3">
+                <div>
+                  <label className="text-xs font-bold text-slate-400 block mb-1">
+                    (+) Tambahan Jumlah Dus Masuk
+                  </label>
+                  <input
+                    type="number"
+                    min="0"
+                    placeholder="0"
+                    value={restockBox || ''}
+                    onChange={(e) => setRestockBox(Number(e.target.value))}
+                    className="w-full bg-slate-50 dark:bg-slate-950 border border-emerald-500/50 rounded-xl px-3.5 py-2 text-sm font-bold text-emerald-500 focus:outline-none focus:border-emerald-500"
+                    autoFocus
+                  />
+                </div>
+
+                {restockProduct.is_retail_allowed && (
+                  <div>
+                    <label className="text-xs font-bold text-slate-400 block mb-1">
+                      (+) Tambahan Jumlah Pcs Masuk (Ecer)
+                    </label>
+                    <input
+                      type="number"
+                      min="0"
+                      placeholder="0"
+                      value={restockBottle || ''}
+                      onChange={(e) => setRestockBottle(Number(e.target.value))}
+                      className="w-full bg-slate-50 dark:bg-slate-950 border border-slate-200 dark:border-slate-800 rounded-xl px-3.5 py-2 text-sm font-bold focus:outline-none focus:border-emerald-500"
+                    />
+                  </div>
+                )}
+              </div>
+
+              {/* Live Preview Stok Akhir */}
+              <div className="p-3 bg-emerald-950/20 border border-emerald-500/20 rounded-xl text-xs font-bold text-emerald-400 flex justify-between items-center">
+                <span>Total Stok Akhir Nanti:</span>
+                <span className="text-sm font-black">
+                  {(restockProduct.box_stock || 0) + Number(restockBox)} Dus
+                </span>
+              </div>
+
+              <div className="flex justify-end gap-3 pt-2">
+                <button
+                  type="button"
+                  onClick={() => setRestockProduct(null)}
+                  className="px-4 py-2 rounded-xl text-xs font-bold text-slate-400 hover:text-white"
+                >
+                  Batal
+                </button>
+                <button
+                  type="submit"
+                  disabled={submitting}
+                  className="bg-emerald-600 hover:bg-emerald-500 text-white font-bold text-xs px-5 py-2 rounded-xl shadow-md transition disabled:opacity-50 flex items-center gap-1"
+                >
+                  {submitting ? 'Menyimpan...' : '📥 Tambah Stok Masuk'}
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
 
       {/* 📝 MODAL DIALOG (TAMBAH / EDIT PRODUK) */}
       {isModalOpen && (
@@ -338,7 +489,7 @@ export default function ProductsMasterPage() {
 
               <div className="grid grid-cols-2 gap-3">
                 <div>
-                  <label className="text-xs font-bold text-slate-400 block mb-1">Stok Dus</label>
+                  <label className="text-xs font-bold text-slate-400 block mb-1">Stok Awal (Dus)</label>
                   <input
                     type="number"
                     min="0"

@@ -12,6 +12,7 @@ interface Transaction {
   total_price: number
   paid_amount: number
   payment_status: string
+  delivery_status?: string
 }
 
 interface AggregatedItem {
@@ -29,6 +30,7 @@ interface SavedDelivery {
   helpers: string[]
   aggregated_items: AggregatedItem[]
   stores_data: {
+    transaction_id?: number
     customer_name: string
     product_name: string
     sisa_piutang: number
@@ -54,6 +56,7 @@ export default function DeliveryRekapPage() {
   const [transactions, setTransactions] = useState<Transaction[]>([])
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
+  const [processingIndex, setProcessingIndex] = useState<number | null>(null)
 
   // State Toast Notification
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
@@ -80,7 +83,7 @@ export default function DeliveryRekapPage() {
   const fetchTransactionsByDate = async (dateStr: string) => {
     setLoading(true)
 
-    // 1. Ambil ID transaksi yang sudah dimasukkan ke rekap pengiriman
+    // 1. Ambil ID transaksi yang SUDAH dimuat dalam rekap delivery pada tanggal tersebut
     const { data: existingDeliveries } = await supabase
       .from('deliveries')
       .select('transaction_ids')
@@ -88,13 +91,15 @@ export default function DeliveryRekapPage() {
 
     const usedTxIds = existingDeliveries?.flatMap((d) => d.transaction_ids || []) || []
 
-    // 2. Ambil transaksi yang BELUM pernah di-rekap
+    // 2. Query Transaksi Antrean Delivery
     let query = supabase
       .from('transactions')
       .select('*')
-      .eq('transaction_date', dateStr)
+      // 🟢 MENGGUNAKAN .lte AGAR NOTA TUNGGAKAN KEMARIN (SEPERTI SMA 15) TETAP MUNCUL HARI INI
+      .lte('transaction_date', dateStr)
       .neq('payment_status', 'CANCELLED')
-      .order('id', { ascending: true })
+      .neq('delivery_status', 'DELIVERED')
+      .order('transaction_date', { ascending: true })
 
     if (usedTxIds.length > 0) {
       query = query.not('id', 'in', `(${usedTxIds.join(',')})`)
@@ -106,9 +111,30 @@ export default function DeliveryRekapPage() {
       console.error('Error fetching transactions:', error.message)
     } else if (data) {
       setTransactions(data)
-      setSelectedTxIds(data.map((t) => t.id))
+      // 🔴 AUTO CHECKLIST DI-OFF-KAN: default kosongkan pilihan centang
+      setSelectedTxIds([])
     }
     setLoading(false)
+  }
+
+  // 🟢 Fungsi instan tanpa pop-up konfirmasi untuk bersihkan nota susulan/lama
+  const handleMarkAsDelivered = async (txId: number, customerName: string) => {
+    // 1. Hilangkan langsung dari layar
+    setTransactions((prev) => prev.filter((t) => t.id !== txId))
+    setSelectedTxIds((prev) => prev.filter((id) => id !== txId))
+
+    // 2. Update status ke Supabase
+    const { error } = await supabase
+      .from('transactions')
+      .update({ delivery_status: 'DELIVERED' })
+      .eq('id', txId)
+
+    if (error) {
+      showToast('Gagal memperbarui status: ' + error.message, 'error')
+      fetchTransactionsByDate(selectedDate)
+    } else {
+      showToast(`✅ Nota ${customerName} disembunyikan!`, 'success')
+    }
   }
 
   const fetchSavedDeliveries = async () => {
@@ -145,9 +171,77 @@ export default function DeliveryRekapPage() {
     setHelpers(updated)
   }
 
+  // 💵 AKSI PELUNASAN CASH UNTUK TOKO
+  const handlePayStoreCash = async (storeIndex: number) => {
+    if (!selectedDeliveryDetail) return
+
+    const store = selectedDeliveryDetail.stores_data[storeIndex]
+    const txId = store.transaction_id || selectedDeliveryDetail.transaction_ids?.[storeIndex]
+
+    if (!confirm(`Konfirmasi pelunasan Cash untuk ${store.customer_name}?`)) return
+
+    setProcessingIndex(storeIndex)
+
+    if (txId) {
+      const { data: tx } = await supabase
+        .from('transactions')
+        .select('total_price')
+        .eq('id', txId)
+        .single()
+
+      const fullPrice = tx?.total_price || store.sisa_piutang
+
+      await supabase
+        .from('transactions')
+        .update({
+          paid_amount: fullPrice,
+          payment_status: 'PAID',
+          delivery_status: 'DELIVERED',
+        })
+        .eq('id', txId)
+    }
+
+    const updatedStores = [...selectedDeliveryDetail.stores_data]
+    const paidAmount = updatedStores[storeIndex].sisa_piutang
+
+    updatedStores[storeIndex] = {
+      ...updatedStores[storeIndex],
+      sisa_piutang: 0,
+      status: 'PAID',
+    }
+
+    const newTotalCod = Math.max(0, (selectedDeliveryDetail.total_cod || 0) - paidAmount)
+
+    const { error } = await supabase
+      .from('deliveries')
+      .update({
+        stores_data: updatedStores,
+        total_cod: newTotalCod,
+      })
+      .eq('id', selectedDeliveryDetail.id)
+
+    setProcessingIndex(null)
+
+    if (error) {
+      showToast('Gagal memperbarui status: ' + error.message, 'error')
+    } else {
+      showToast(`✅ Pembayaran Cash ${store.customer_name} berhasil disimpan!`, 'success')
+
+      const updatedDetail = {
+        ...selectedDeliveryDetail,
+        stores_data: updatedStores,
+        total_cod: newTotalCod,
+      }
+      setSelectedDeliveryDetail(updatedDetail)
+      fetchSavedDeliveries()
+    }
+  }
+
   // 🗑️ EKSEKUSI PEMBATALAN REKAP PENGIRIMAN
   const executeDeleteDelivery = async () => {
     if (!deleteTargetId) return
+
+    const targetDelivery = savedDeliveries.find((d) => d.id === deleteTargetId)
 
     const { error } = await supabase
       .from('deliveries')
@@ -157,11 +251,17 @@ export default function DeliveryRekapPage() {
     if (error) {
       showToast('Gagal membatalkan pengiriman: ' + error.message, 'error')
     } else {
+      if (targetDelivery?.transaction_ids?.length) {
+        await supabase
+          .from('transactions')
+          .update({ delivery_status: 'PENDING' })
+          .in('id', targetDelivery.transaction_ids)
+      }
+
       showToast('Rekap pengiriman berhasil dibatalkan!', 'success')
       setSelectedDeliveryDetail(null)
       setDeleteTargetId(null)
       
-      // Refresh data riwayat & transaksi rekap baru
       fetchSavedDeliveries()
       fetchTransactionsByDate(selectedDate)
     }
@@ -226,6 +326,7 @@ export default function DeliveryRekapPage() {
 
     const activeHelpers = helpers.filter((h) => h.trim() !== '')
     const storesSummary = activeSelectedTx.map((tx) => ({
+      transaction_id: tx.id,
       customer_name: tx.customer_name,
       product_name: tx.product_name,
       sisa_piutang: Math.max(0, (tx.total_price || 0) - (tx.paid_amount || 0)),
@@ -245,11 +346,16 @@ export default function DeliveryRekapPage() {
       },
     ])
 
-    setSaving(false)
-
     if (error) {
+      setSaving(false)
       showToast('Gagal menyimpan data: ' + error.message, 'error')
     } else {
+      await supabase
+        .from('transactions')
+        .update({ delivery_status: 'IN_DELIVERY' })
+        .in('id', selectedTxIds)
+
+      setSaving(false)
       showToast('Data pengiriman berhasil disimpan!', 'success')
       setDriverName('')
       setVehicleNo('')
@@ -289,7 +395,7 @@ export default function DeliveryRekapPage() {
             <span>🚚</span> Rekap Muatan Pengiriman
           </h1>
           <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400">
-            Penugasan armada driver & helper serta simpan riwayat pengiriman harian.
+            Penugasan driver & helper serta simpan riwayat pengiriman harian.
           </p>
         </div>
 
@@ -333,7 +439,6 @@ export default function DeliveryRekapPage() {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {/* Tanggal & No Plat */}
               <div className="space-y-3">
                 <div>
                   <label className="text-xs font-bold text-slate-400 block mb-1">Pilih Tanggal</label>
@@ -362,7 +467,6 @@ export default function DeliveryRekapPage() {
                 </div>
               </div>
 
-              {/* Nama Driver */}
               <div>
                 <label className="text-xs font-bold text-slate-400 block mb-1">Nama Driver / Supir</label>
                 <input
@@ -374,7 +478,6 @@ export default function DeliveryRekapPage() {
                 />
               </div>
 
-              {/* Multiple Helpers */}
               <div className="space-y-2">
                 <div className="flex items-center justify-between">
                   <label className="text-xs font-bold text-slate-400 block">
@@ -489,6 +592,7 @@ export default function DeliveryRekapPage() {
                       <th className="py-3 px-4">Pesanan Barang</th>
                       <th className="py-3 px-4 text-right">Sisa Piutang (COD)</th>
                       <th className="py-3 px-4 text-center">Status Nota</th>
+                      <th className="py-3 px-4 text-center">Aksi Cepat</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-200 dark:divide-slate-800 font-medium">
@@ -530,6 +634,16 @@ export default function DeliveryRekapPage() {
                             <span className="inline-block px-2.5 py-0.5 text-[10px] font-extrabold rounded-full bg-slate-500/10 text-slate-400 border border-slate-500/20">
                               {tx.payment_status}
                             </span>
+                          </td>
+                          <td className="py-3.5 px-4 text-center">
+                            <button
+                              type="button"
+                              onClick={() => handleMarkAsDelivered(tx.id, tx.customer_name)}
+                              title="Sembunyikan karena barang sudah dikirim / nota susulan"
+                              className="text-[11px] font-bold text-emerald-400 bg-emerald-500/10 hover:bg-emerald-500/20 border border-emerald-500/30 px-2.5 py-1 rounded-lg transition whitespace-nowrap"
+                            >
+                              ✅ Sudah Dikirim
+                            </button>
                           </td>
                         </tr>
                       )
@@ -705,18 +819,38 @@ export default function DeliveryRekapPage() {
                       <th className="p-3">Toko</th>
                       <th className="p-3">Barang Pesanan</th>
                       <th className="p-3 text-right">Tagihan COD</th>
+                      <th className="p-3 text-center">Status / Aksi</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800">
-                    {selectedDeliveryDetail.stores_data?.map((store, idx) => (
-                      <tr key={idx}>
-                        <td className="p-3 font-bold">🏪 {store.customer_name}</td>
-                        <td className="p-3 text-slate-300">{store.product_name}</td>
-                        <td className="p-3 text-right font-bold text-rose-400">
-                          Rp {store.sisa_piutang?.toLocaleString('id-ID')}
-                        </td>
-                      </tr>
-                    ))}
+                    {selectedDeliveryDetail.stores_data?.map((store, idx) => {
+                      const isPaid = store.status === 'PAID' || store.sisa_piutang === 0
+
+                      return (
+                        <tr key={idx}>
+                          <td className="p-3 font-bold">🏪 {store.customer_name}</td>
+                          <td className="p-3 text-slate-300">{store.product_name}</td>
+                          <td className="p-3 text-right font-bold text-rose-400">
+                            Rp {store.sisa_piutang?.toLocaleString('id-ID')}
+                          </td>
+                          <td className="p-3 text-center">
+                            {isPaid ? (
+                              <span className="text-[10px] font-extrabold text-emerald-400 bg-emerald-950/80 border border-emerald-800/80 px-2.5 py-1 rounded-lg inline-block">
+                                🟢 LUNAS
+                              </span>
+                            ) : (
+                              <button
+                                onClick={() => handlePayStoreCash(idx)}
+                                disabled={processingIndex === idx}
+                                className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-[11px] px-3 py-1 rounded-lg shadow transition"
+                              >
+                                {processingIndex === idx ? 'Processing...' : '💵 Terima Cash'}
+                              </button>
+                            )}
+                          </td>
+                        </tr>
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -746,7 +880,7 @@ export default function DeliveryRekapPage() {
         </div>
       )}
 
-      {/* ⚠️ MODAL CUSTOM KONFIRMASI PEMBATALAN (Menggantikan window.confirm) */}
+      {/* ⚠️ MODAL CUSTOM KONFIRMASI PEMBATALAN */}
       {deleteTargetId !== null && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
           <div className="bg-slate-900 border border-slate-800 p-6 rounded-2xl max-w-md w-full space-y-4 text-center text-slate-100 shadow-2xl">

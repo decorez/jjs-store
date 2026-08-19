@@ -21,11 +21,10 @@ export default function ReportsPage() {
 
   const fetchTransactions = async () => {
     setLoading(true)
-    // 🔍 Menambahkan filter .neq('payment_status', 'CANCELLED')
     const { data, error } = await supabase
       .from('transactions')
       .select('*')
-      .neq('payment_status', 'CANCELLED') // 👈 Mengabaikan transaksi yang dibatalkan
+      .neq('payment_status', 'CANCELLED')
       .order('id', { ascending: false })
 
     if (data) setTransactions(data)
@@ -35,9 +34,29 @@ export default function ReportsPage() {
 
   useEffect(() => {
     fetchTransactions()
+
+    // 🟢 REALTIME SUBSCRIPTION: Otomatis re-fetch saat ada update di tabel transactions
+    const channel = supabase
+      .channel('realtime-reports')
+      .on(
+        'postgres_changes',
+        {
+          event: '*',
+          schema: 'public',
+          table: 'transactions',
+        },
+        () => {
+          fetchTransactions()
+        }
+      )
+      .subscribe()
+
+    return () => {
+      supabase.removeChannel(channel)
+    }
   }, [])
 
-  // Kalkulasi Akurat & Akumulatif (Sinkron dengan halaman Sales)
+  // Kalkulasi Akurat & Akumulatif
   const totalOmzet = transactions.reduce((sum, tx) => sum + (Number(tx.total_price) || 0), 0)
   const totalPaidCash = transactions.reduce((sum, tx) => sum + (Number(tx.paid_amount) || 0), 0)
   const totalPiutang = totalOmzet - totalPaidCash
@@ -52,6 +71,15 @@ export default function ReportsPage() {
         >
           ← Kembali ke Dashboard
         </Link>
+
+        {/* 🔄 Tombol Manual Refresh */}
+        <button
+          onClick={fetchTransactions}
+          disabled={loading}
+          className="bg-slate-100 dark:bg-slate-800 hover:bg-slate-200 dark:hover:bg-slate-700 text-xs font-bold px-3 py-1.5 rounded-lg border border-slate-300 dark:border-slate-700 transition flex items-center gap-1.5"
+        >
+          <span>🔄</span> {loading ? 'Memuat...' : 'Refresh Data'}
+        </button>
       </div>
 
       {/* Title Header */}
@@ -64,7 +92,7 @@ export default function ReportsPage() {
         </p>
       </div>
 
-      {/* Metric Cards (Sinkron 100%) */}
+      {/* Metric Cards */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
         {/* Total Omzet */}
         <div className="bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-5 rounded-2xl shadow-sm dark:shadow-xl space-y-1 transition-colors">
@@ -124,13 +152,14 @@ export default function ReportsPage() {
                   <th className="p-3.5">Toko / Pembeli</th>
                   <th className="p-3.5">Produk</th>
                   <th className="p-3.5 text-right">Total Transaksi</th>
+                  <th className="p-3.5 text-right">Sudah Dibayar</th>
                   <th className="p-3.5 text-center">Status</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-slate-200 dark:divide-slate-800/60 text-sm">
                 {transactions.length === 0 ? (
                   <tr>
-                    <td colSpan={4} className="text-center py-12 text-slate-400">
+                    <td colSpan={5} className="text-center py-12 text-slate-400">
                       Belum ada transaksi.
                     </td>
                   </tr>
@@ -153,6 +182,9 @@ export default function ReportsPage() {
                         </td>
                         <td className="p-3.5 text-right font-bold text-slate-900 dark:text-white">
                           Rp {total.toLocaleString('id-ID')}
+                        </td>
+                        <td className="p-3.5 text-right font-bold text-emerald-600 dark:text-emerald-400">
+                          Rp {paid.toLocaleString('id-ID')}
                         </td>
                         <td className="p-3.5 text-center whitespace-nowrap">
                           <span className={`inline-block px-3 py-1 rounded-full text-xs font-semibold border ${
