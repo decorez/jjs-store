@@ -4,6 +4,8 @@ import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
 import Link from 'next/link'
 
+import CustomerHistoryModal from '@/components/dashboard/CustomerHistoryModal'
+
 interface Customer {
   id: number
   name: string
@@ -23,6 +25,8 @@ export default function CustomersPage() {
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
+  const [selectedHistoryCustomer, setSelectedHistoryCustomer] = useState<{ id?: number; name: string } | null>(null)
+  const [isHistoryOpen, setIsHistoryOpen] = useState(false)
 
   // State Custom Toast Notification
   const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
@@ -52,7 +56,6 @@ export default function CustomersPage() {
     // Ambil data toko & transaksi untuk rekap total belanja & piutang
     const [resCust, resTx] = await Promise.all([
       supabase.from('customers').select('*').order('name', { ascending: true }),
-      // 🟢 1. Ambil SEMUA transaksi (jangan pakai .neq di Supabase agar data bernilai NULL tidak hilang)
       supabase
         .from('transactions')
         .select('customer_name, total_price, paid_amount, payment_status'),
@@ -69,7 +72,6 @@ export default function CustomersPage() {
 
     // Agregasi statistik nota, belanja, dan piutang per pelanggan
     const combined: CustomerWithStats[] = custData.map((cust) => {
-      // 🟢 2. Filter aman di JavaScript: Hanya buang transaksi yang berstatus 'CANCELLED'
       const myTxs = txData.filter(
         (tx) =>
           tx.customer_name?.toLowerCase().trim() === cust.name?.toLowerCase().trim() &&
@@ -122,6 +124,11 @@ export default function CustomersPage() {
       setFormData({ name: '', phone: '', address: '' })
     }
     setIsModalOpen(true)
+  }
+
+  const handleOpenHistory = (customer: CustomerWithStats) => {
+    setSelectedHistoryCustomer({ id: customer.id, name: customer.name })
+    setIsHistoryOpen(true)
   }
 
   const handleCloseModal = () => {
@@ -273,9 +280,14 @@ export default function CustomersPage() {
                     {/* Column 1: Name & Nota Count */}
                     <td className="py-3.5 px-5">
                       <div className="font-bold text-slate-100 text-sm">{item.name}</div>
-                      <div className="text-[11px] text-slate-500 mt-0.5 font-normal">
-                        {item.totalNota} Nota Transaksi
-                      </div>
+                      <button
+                        type="button"
+                        onClick={() => handleOpenHistory(item)}
+                        className="text-[11px] text-blue-400 hover:text-blue-300 hover:underline cursor-pointer font-semibold flex items-center gap-1 mt-0.5 transition"
+                      >
+                        <span>{item.totalNota} Nota Transaksi</span>
+                        <span className="text-[9px]">🔍</span>
+                      </button>
                     </td>
 
                     {/* Column 2: Phone & Address */}
@@ -437,6 +449,13 @@ export default function CustomersPage() {
           </div>
         </div>
       )}
+
+      {/* 📜 MODAL HISTORY TRANSAKSI */}
+      <CustomerHistoryModal
+        customer={selectedHistoryCustomer}
+        isOpen={isHistoryOpen}
+        onClose={() => setIsHistoryOpen(false)}
+      />
     </div>
   )
 }

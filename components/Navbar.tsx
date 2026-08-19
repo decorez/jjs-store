@@ -72,9 +72,6 @@ export default function Navbar() {
               <h1 className="font-bold text-lg text-blue-600 dark:text-blue-400 leading-none">
                 JJ GROUP
               </h1>
-              <span className="text-[10px] text-slate-500 dark:text-slate-400 font-semibold uppercase tracking-wider">
-                Sistem Kasir
-              </span>
             </div>
           </div>
           <ThemeToggle />
