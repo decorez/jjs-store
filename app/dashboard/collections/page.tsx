@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
 import Link from 'next/link'
 
@@ -22,6 +22,7 @@ interface Transaction {
 
 // Option Sales / Petugas Penagih
 const SALES_OPTIONS = ['Eko']
+const DRAFT_KEY = 'DRAFT_ASSIGNMENTS_PAGE'
 
 // Helper Format Tanggal (contoh: 17 Agt 2026)
 const formatDate = (dateString?: string) => {
@@ -59,9 +60,13 @@ export default function CollectionPage() {
   const [editStatus, setEditStatus] = useState<string>('UNPAID')
   const [savingEdit, setSavingEdit] = useState(false)
 
-  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
+  // 💾 State Indikator Restored Draft
+  const [isDraftRestored, setIsDraftRestored] = useState(false)
+  const isInitialLoadDone = useRef(false)
 
-  const showToast = (message: string, type: 'success' | 'error' = 'success') => {
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'warning' } | null>(null)
+
+  const showToast = (message: string, type: 'success' | 'error' | 'warning' = 'success') => {
     setToast({ message, type })
     setTimeout(() => setToast(null), 3000)
   }
@@ -86,6 +91,65 @@ export default function CollectionPage() {
   useEffect(() => {
     fetchTransactions()
   }, [])
+
+  // 💾 1. RESTORE DRAFT DARI LOCALSTORAGE KETIKA HALAMAN DIMUAT
+  useEffect(() => {
+    const savedDraft = localStorage.getItem(DRAFT_KEY)
+    if (savedDraft) {
+      try {
+        const parsed = JSON.parse(savedDraft)
+        if (parsed) {
+          if (parsed.selectedSales) setSelectedSales(parsed.selectedSales)
+          if (parsed.checkedIds && Array.isArray(parsed.checkedIds)) setCheckedIds(parsed.checkedIds)
+          if (parsed.search) setSearch(parsed.search)
+
+          if ((parsed.checkedIds && parsed.checkedIds.length > 0) || parsed.selectedSales) {
+            setIsDraftRestored(true)
+          }
+        }
+      } catch (err) {
+        console.error('Gagal membaca draft assignments:', err)
+      }
+    }
+    setTimeout(() => {
+      isInitialLoadDone.current = true
+    }, 500)
+  }, [])
+
+  // 💾 2. AUTOSAVE FORM SECARA REAL-TIME KETIKA ADA PERUBAHAN
+  useEffect(() => {
+    if (!isInitialLoadDone.current) return
+
+    const draftData = {
+      selectedSales,
+      checkedIds,
+      search,
+    }
+
+    localStorage.setItem(DRAFT_KEY, JSON.stringify(draftData))
+  }, [selectedSales, checkedIds, search])
+
+  // 🚨 3. PERINGATAN BROWSER SAAT USER REFRESH / KELUAR JIKA ADA CENTANGAN
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (checkedIds.length > 0 && !loading) {
+        e.preventDefault()
+        e.returnValue = ''
+      }
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [checkedIds, loading])
+
+  // Helper Hapus Draft Form
+  const handleClearDraft = () => {
+    localStorage.removeItem(DRAFT_KEY)
+    setSelectedSales('')
+    setCheckedIds([])
+    setSearch('')
+    setIsDraftRestored(false)
+    showToast('Draft penugasan berhasil dibersihkan!', 'warning')
+  }
 
   // Checkbox Individual
   const handleToggleCheck = (id: number) => {
@@ -132,7 +196,11 @@ export default function CollectionPage() {
       showToast('Gagal menyerahkan nota: ' + error.message, 'error')
     } else {
       showToast(`Berhasil menyerahkan ${checkedIds.length} nota ke ${selectedSales}!`, 'success')
+      
+      // 🧹 HAPUS DRAFT DARI LOCALSTORAGE SETELAH BERHASIL DISERAHKAN
+      localStorage.removeItem(DRAFT_KEY)
       setCheckedIds([])
+      setIsDraftRestored(false)
       fetchTransactions()
     }
     setLoading(false)
@@ -317,10 +385,12 @@ export default function CollectionPage() {
           className={`fixed top-5 right-5 z-50 flex items-center gap-2 px-4 py-3 rounded-xl shadow-2xl border text-xs font-bold transition-all ${
             toast.type === 'error'
               ? 'bg-rose-950 border-rose-800 text-rose-200'
+              : toast.type === 'warning'
+              ? 'bg-amber-950 border-amber-800 text-amber-200'
               : 'bg-emerald-950 border-emerald-800 text-emerald-200'
           }`}
         >
-          <span>{toast.type === 'error' ? '⚠️' : '✅'}</span>
+          <span>{toast.type === 'error' ? '⚠️' : toast.type === 'warning' ? '⚡' : '✅'}</span>
           <span>{toast.message}</span>
         </div>
       )}
@@ -352,6 +422,25 @@ export default function CollectionPage() {
           </div>
         </div>
       </div>
+
+      {/* 🛡️ BANNER NOTIFIKASI DRAFT TERPULIHKAN */}
+      {isDraftRestored && (
+        <div className="bg-amber-500/10 border border-amber-500/30 p-3.5 rounded-2xl flex items-center justify-between text-xs text-amber-300">
+          <div className="flex items-center gap-2 font-medium">
+            <span className="text-base">⚡</span>
+            <span>
+              <strong>Draft Dipulihkan:</strong> Pilihan sales & {checkedIds.length} centangan nota dari sesi sebelumnya dimuat kembali.
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={handleClearDraft}
+            className="text-rose-400 hover:text-rose-300 font-bold underline shrink-0 text-xs ml-2"
+          >
+            Reset Draft
+          </button>
+        </div>
+      )}
 
       {/* BAR PENYERAHAN NOTA & PENCARIAN */}
       <div className="bg-[#0b1329] border border-slate-800 p-4 rounded-2xl shadow-xl flex flex-col md:flex-row gap-4 items-stretch md:items-center justify-between">

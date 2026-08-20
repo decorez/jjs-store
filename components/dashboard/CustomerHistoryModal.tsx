@@ -49,14 +49,15 @@ export default function CustomerHistoryModal({
     if (!customer) return
     setLoading(true)
 
-    // PENCARIAN FLEKSIBEL:
-    // Mencari berdasarkan customer_id jika ada, atau pencarian nama customer
     let query = supabase.from('transactions').select('*')
 
+    // 🎯 PERBAIKAN LOGIKA PENCARIAN:
+    // 1. Jika customer.id ada, utamakan filter persis berdasarkan ID toko
     if (customer.id) {
-      query = query.or(`customer_id.eq.${customer.id},customer_name.ilike.%${customer.name}%`)
+      query = query.eq('customer_id', customer.id)
     } else {
-      query = query.ilike('customer_name', `%${customer.name}%`)
+      // 2. Fallback jika data transaksi lama belum memiliki customer_id
+      query = query.eq('customer_name', customer.name)
     }
 
     const { data, error } = await query.order('created_at', { ascending: false })

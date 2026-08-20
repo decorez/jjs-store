@@ -53,12 +53,12 @@ export default function CustomersPage() {
   const fetchCustomers = async () => {
     setLoading(true)
 
-    // Ambil data toko & transaksi untuk rekap total belanja & piutang
+    // Ambil data toko & transaksi (sertakan customer_id jika ada di DB)
     const [resCust, resTx] = await Promise.all([
       supabase.from('customers').select('*').order('name', { ascending: true }),
       supabase
         .from('transactions')
-        .select('customer_name, total_price, paid_amount, payment_status'),
+        .select('customer_id, customer_name, total_price, paid_amount, payment_status'),
     ])
 
     if (resCust.error) {
@@ -70,13 +70,20 @@ export default function CustomersPage() {
     const custData = resCust.data || []
     const txData = resTx.data || []
 
-    // Agregasi statistik nota, belanja, dan piutang per pelanggan
+    // Agregasi statistik nota, belanja, dan piutang per pelanggan berdasarkan ID
     const combined: CustomerWithStats[] = custData.map((cust) => {
-      const myTxs = txData.filter(
-        (tx) =>
-          tx.customer_name?.toLowerCase().trim() === cust.name?.toLowerCase().trim() &&
-          tx.payment_status !== 'CANCELLED'
-      )
+      const myTxs = txData.filter((tx) => {
+        if (tx.payment_status === 'CANCELLED') return false
+
+        // 1. Prioritas Utama: Filter berdasarkan customer_id jika ada
+        if (tx.customer_id) {
+          return tx.customer_id === cust.id
+        }
+
+        // 2. Fallback jika transaksi lama belum pakai customer_id:
+        // Cocokkan nama persis
+        return tx.customer_name?.toLowerCase().trim() === cust.name?.toLowerCase().trim()
+      })
 
       const totalNota = myTxs.length
       const totalBelanja = myTxs.reduce((sum, tx) => sum + (tx.total_price || 0), 0)

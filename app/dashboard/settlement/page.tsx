@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
 import Link from 'next/link'
 
@@ -21,6 +21,8 @@ interface Transaction {
   payment_history?: PaymentLog[]
 }
 
+const SETTLEMENT_DRAFT_KEY = 'DRAFT_SETTLEMENT_PAGE'
+
 export default function SettlementPage() {
   const [salesList, setSalesList] = useState<string[]>([])
   const [selectedSales, setSelectedSales] = useState<string>('')
@@ -28,9 +30,9 @@ export default function SettlementPage() {
   const [loading, setLoading] = useState(false)
 
   // 🔔 State Toast Notification
-  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' } | null>(null)
+  const [toast, setToast] = useState<{ message: string; type: 'success' | 'error' | 'warning' } | null>(null)
 
-  const showToast = (message: string, type: 'success' | 'error' = 'error') => {
+  const showToast = (message: string, type: 'success' | 'error' | 'warning' = 'error') => {
     setToast({ message, type })
     setTimeout(() => {
       setToast(null)
@@ -44,6 +46,39 @@ export default function SettlementPage() {
   const [settlementData, setSettlementData] = useState<{
     [key: number]: { amount: string; newDueDate: string }
   }>({})
+
+  const isInitialLoadDone = useRef(false)
+
+  // 💾 1. RESTORE DRAFT DARI LOCALSTORAGE
+  useEffect(() => {
+    const savedDraft = localStorage.getItem(SETTLEMENT_DRAFT_KEY)
+    if (savedDraft) {
+      try {
+        const parsed = JSON.parse(savedDraft)
+        if (parsed) {
+          if (parsed.selectedSales) setSelectedSales(parsed.selectedSales)
+          if (parsed.settlementData) setSettlementData(parsed.settlementData)
+        }
+      } catch (err) {
+        console.error('Gagal memuat draft setoran:', err)
+      }
+    }
+    setTimeout(() => {
+      isInitialLoadDone.current = true
+    }, 500)
+  }, [])
+
+  // 💾 2. AUTOSAVE FORM SECARA REAL-TIME
+  useEffect(() => {
+    if (!isInitialLoadDone.current) return
+
+    const draftData = {
+      selectedSales,
+      settlementData,
+    }
+
+    localStorage.setItem(SETTLEMENT_DRAFT_KEY, JSON.stringify(draftData))
+  }, [selectedSales, settlementData])
 
   // Fetch daftar sales yang sedang membawa nota (is_carried = true)
   const fetchActiveSales = async () => {
@@ -60,8 +95,14 @@ export default function SettlementPage() {
     if (data) {
       const uniqueSales = Array.from(
         new Set(data.map((item) => item.assigned_sales).filter(Boolean))
-      )
-      setSalesList(uniqueSales as string[])
+      ) as string[]
+
+      setSalesList(uniqueSales)
+
+      // 🎯 Auto-select jika hanya ada 1 sales (misal: Eko) & belum ada pilihan
+      if (uniqueSales.length === 1 && !selectedSales) {
+        setSelectedSales(uniqueSales[0])
+      }
     }
   }
 
@@ -88,20 +129,42 @@ export default function SettlementPage() {
         showToast('Gagal mengambil nota sales: ' + error.message, 'error')
       } else if (data) {
         setCarriedNotes(data)
-        const initialMap: { [key: number]: { amount: string; newDueDate: string } } = {}
-        data.forEach((item) => {
-          initialMap[item.id] = {
-            amount: '0',
-            newDueDate: item.due_date || '',
-          }
+
+        // Hanya isi default jika data di settlementData belum diset/kosong
+        setSettlementData((prevData) => {
+          const updatedMap = { ...prevData }
+          data.forEach((item) => {
+            if (!updatedMap[item.id]) {
+              updatedMap[item.id] = {
+                amount: '0',
+                newDueDate: item.due_date || '',
+              }
+            }
+          })
+          return updatedMap
         })
-        setSettlementData(initialMap)
       }
       setLoading(false)
     }
 
     fetchCarriedNotes()
   }, [selectedSales])
+
+  // 🚨 PERINGATAN REFRESH/PINDAH HALAMAN JIKA ADA NOMINAL INPUT > 0
+  const hasUnsavedInput = Object.values(settlementData).some(
+    (item) => Number(item.amount) > 0
+  )
+
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      if (hasUnsavedInput && !loading) {
+        e.preventDefault()
+        e.returnValue = ''
+      }
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [hasUnsavedInput, loading])
 
   const handleInputChange = (id: number, field: 'amount' | 'newDueDate', value: string) => {
     setSettlementData((prev) => ({
@@ -118,6 +181,14 @@ export default function SettlementPage() {
     const inputVal = Number(settlementData[item.id]?.amount) || 0
     return sum + inputVal
   }, 0)
+
+  // Reset Draft Manual
+  const handleResetDraft = () => {
+    localStorage.removeItem(SETTLEMENT_DRAFT_KEY)
+    setSelectedSales('')
+    setSettlementData({})
+    showToast('Draft setoran berhasil dibersihkan!', 'warning')
+  }
 
   // Eksekusi Simpan Setoran Sales
   const executeSubmitSettlement = async () => {
@@ -168,8 +239,12 @@ export default function SettlementPage() {
       }
 
       showToast(`Setoran sales ${selectedSales} berhasil diproses!`, 'success')
+
+      // 🧹 HAPUS DRAFT LOCALSTORAGE SETELAH SUKSES SIMPAN
+      localStorage.removeItem(SETTLEMENT_DRAFT_KEY)
       setSelectedSales('')
       setCarriedNotes([])
+      setSettlementData({})
       fetchActiveSales()
     } catch (err: any) {
       showToast('Gagal memproses setoran: ' + err.message, 'error')
@@ -184,13 +259,15 @@ export default function SettlementPage() {
       {/* 🔔 CUSTOM TOAST NOTIFICATION */}
       {toast && (
         <div
-          className={`fixed top-5 right-5 z-50 flex items-center gap-2 px-4 py-3 rounded-xl shadow-2xl border text-xs font-bold transition-all animate-bounce ${
+          className={`fixed top-5 right-5 z-50 flex items-center gap-2 px-4 py-3 rounded-xl shadow-2xl border text-xs font-bold transition-all ${
             toast.type === 'error'
               ? 'bg-rose-950 border-rose-800 text-rose-200'
+              : toast.type === 'warning'
+              ? 'bg-amber-950 border-amber-800 text-amber-200'
               : 'bg-emerald-950 border-emerald-800 text-emerald-200'
           }`}
         >
-          <span>{toast.type === 'error' ? '⚠️' : '✅'}</span>
+          <span>{toast.type === 'error' ? '⚠️' : toast.type === 'warning' ? '⚡' : '✅'}</span>
           <span>{toast.message}</span>
         </div>
       )}
@@ -232,6 +309,17 @@ export default function SettlementPage() {
                 </option>
               ))}
             </select>
+
+            {selectedSales && (
+              <button
+                type="button"
+                onClick={handleResetDraft}
+                className="text-xs text-rose-400 hover:underline font-bold"
+                title="Reset pilihan sales & inputan"
+              >
+                Reset
+              </button>
+            )}
           </div>
         </div>
       </div>
@@ -328,7 +416,7 @@ export default function SettlementPage() {
                               type="date"
                               value={currentInput.newDueDate}
                               onChange={(e) => handleInputChange(tx.id, 'newDueDate', e.target.value)}
-                              className="w-full px-2.5 py-2 bg-[#070c1a] border border-slate-800 rounded-xl text-center text-xs text-white focus:outline-none focus:border-blue-500 transition"
+                              className="w-full px-2.5 py-2 bg-[#070c1a] border border-slate-800 rounded-xl text-center text-xs text-white focus:outline-none focus:border-blue-500 transition [color-scheme:dark]"
                             />
                           </td>
 

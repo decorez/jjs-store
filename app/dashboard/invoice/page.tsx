@@ -25,6 +25,8 @@ interface ToastState {
   type: 'error' | 'success' | 'warning'
 }
 
+const DRAFT_KEY = 'DRAFT_INVOICE_PAGE'
+
 // 🔍 Komponen Autocomplete Barang per Baris
 function ProductSearchSelect({
   selectedProductId,
@@ -178,6 +180,10 @@ export default function InvoicePage() {
   // State Pembayaran
   const [paidAmount, setPaidAmount] = useState<number | ''>(0)
 
+  // 💾 State Indikator Restored Draft
+  const [isDraftRestored, setIsDraftRestored] = useState(false)
+  const isInitialLoadDone = useRef(false)
+
   // Helper Presisi Mengambil Harga Dus & Pcs
   const getBoxPrice = (p: any): number => Number(p?.selling_price_per_box ?? p?.harga_dus ?? 0)
   const getPcsPrice = (p: any): number => Number(p?.selling_price_per_bottle ?? p?.harga_pcs ?? 0)
@@ -204,6 +210,88 @@ export default function InvoicePage() {
     }
     fetchMasterData()
   }, [])
+
+  // 💾 1. RESTORE DRAFT DARI LOCALSTORAGE KETIKA HALAMAN DIMUAT
+  useEffect(() => {
+    const savedDraft = localStorage.getItem(DRAFT_KEY)
+    if (savedDraft) {
+      try {
+        const parsed = JSON.parse(savedDraft)
+        if (parsed) {
+          if (parsed.transactionDate) setTransactionDate(parsed.transactionDate)
+          if (parsed.customerSearchQuery) setCustomerSearchQuery(parsed.customerSearchQuery)
+          if (parsed.selectedCustomerData) setSelectedCustomerData(parsed.selectedCustomerData)
+          if (parsed.isManualCustomer) setIsManualCustomer(parsed.isManualCustomer)
+          if (parsed.customCustomerName) setCustomCustomerName(parsed.customCustomerName)
+          if (parsed.customCustomerAddress) setCustomCustomerAddress(parsed.customCustomerAddress)
+          if (parsed.items && parsed.items.length > 0) setItems(parsed.items)
+          if (parsed.paidAmount !== undefined) setPaidAmount(parsed.paidAmount)
+
+          setIsDraftRestored(true)
+        }
+      } catch (err) {
+        console.error('Gagal membaca draft autosave:', err)
+      }
+    }
+    setTimeout(() => {
+      isInitialLoadDone.current = true
+    }, 500)
+  }, [])
+
+  // 💾 2. AUTOSAVE FORM SECARA REAL-TIME KETIKA ADA PERUBAHAN
+  useEffect(() => {
+    if (!isInitialLoadDone.current) return
+
+    const draftData = {
+      transactionDate,
+      customerSearchQuery,
+      selectedCustomerData,
+      isManualCustomer,
+      customCustomerName,
+      customCustomerAddress,
+      items,
+      paidAmount
+    }
+
+    localStorage.setItem(DRAFT_KEY, JSON.stringify(draftData))
+  }, [
+    transactionDate,
+    customerSearchQuery,
+    selectedCustomerData,
+    isManualCustomer,
+    customCustomerName,
+    customCustomerAddress,
+    items,
+    paidAmount
+  ])
+
+  // 🚨 3. PERINGATAN BROWSER SAAT USER REFRESH / KELUAR
+  useEffect(() => {
+    const handleBeforeUnload = (e: BeforeUnloadEvent) => {
+      const hasContent = items.some(i => i.product_name || i.product_id) || selectedCustomerData || customCustomerName
+      if (hasContent && !submitting) {
+        e.preventDefault()
+        e.returnValue = ''
+      }
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [items, selectedCustomerData, customCustomerName, submitting])
+
+  // Helper Hapus Draft Form
+  const handleClearDraft = () => {
+    localStorage.removeItem(DRAFT_KEY)
+    setTransactionDate(new Date().toISOString().split('T')[0])
+    setSelectedCustomerData(null)
+    setCustomerSearchQuery('')
+    setIsManualCustomer(false)
+    setCustomCustomerName('')
+    setCustomCustomerAddress('')
+    setItems([{ product_id: '', product_name: '', unit: 'Dus', quantity: 1, price: 0 }])
+    setPaidAmount(0)
+    setIsDraftRestored(false)
+    showToast('Draft berhasil dibersihkan!', 'warning')
+  }
 
   // Event handler menutup dropdown toko saat klik di luar
   useEffect(() => {
@@ -333,6 +421,7 @@ export default function InvoicePage() {
     let finalCustomerAddress = ''
     let finalCustomerId: number | null = null
 
+    // ⚡ PENANGANAN OTOMATIS ID UNTUK TOKO MANUAL
     if (isManualCustomer) {
       if (!customCustomerName.trim()) {
         showToast('⚠️ Silakan isi nama toko/pelanggan baru!', 'warning')
@@ -340,6 +429,33 @@ export default function InvoicePage() {
       }
       finalCustomerName = customCustomerName.trim()
       finalCustomerAddress = customCustomerAddress.trim()
+
+      // 1. Cek apakah toko tersebut sudah terdaftar di database
+      const existingCust = customers.find(
+        (c) => c.name.toLowerCase().trim() === finalCustomerName.toLowerCase()
+      )
+
+      if (existingCust) {
+        finalCustomerId = existingCust.id
+      } else {
+        // 2. Jika toko baru, simpan langsung ke tabel customers
+        const { data: newCust, error: custError } = await supabase
+          .from('customers')
+          .insert([
+            {
+              name: finalCustomerName,
+              address: finalCustomerAddress,
+            },
+          ])
+          .select('id')
+          .single()
+
+        if (custError) {
+          console.error('Gagal membuat customer baru:', custError.message)
+        } else if (newCust) {
+          finalCustomerId = newCust.id
+        }
+      }
     } else if (selectedCustomerData) {
       finalCustomerId = selectedCustomerData.id
       finalCustomerName = selectedCustomerData.name
@@ -400,7 +516,6 @@ export default function InvoicePage() {
           ]
         : []
 
-    // 📅 Format tanggal ke ISO jam 12 siang agar timezone WIB aman
     const formattedCreatedAt = transactionDate ? `${transactionDate}T12:00:00` : new Date().toISOString()
 
     const { error: txError } = await supabase.from('transactions').insert([
@@ -409,7 +524,7 @@ export default function InvoicePage() {
         customer_name: finalCustomerName,
         customer_address: finalCustomerAddress,
         transaction_date: transactionDate,
-        created_at: formattedCreatedAt, // 👈 Disamakan dengan tanggal input
+        created_at: formattedCreatedAt,
         product_name: productSummary,
         total_price: totalPrice,
         paid_amount: paidNum,
@@ -460,6 +575,8 @@ export default function InvoicePage() {
           .eq('id', prod.id)
       }
     }
+
+    localStorage.removeItem(DRAFT_KEY)
 
     setSubmitting(false)
     showToast('✅ Nota transaksi berhasil disimpan & stok otomatis berkurang!', 'success')
@@ -516,6 +633,25 @@ export default function InvoicePage() {
           Pilih toko, masukkan rincian barang dari katalog, dan hitung total otomatis.
         </p>
       </div>
+
+      {/* 🛡️ BANNER NOTIFIKASI DRAFT TERPULIHKAN */}
+      {isDraftRestored && (
+        <div className="bg-amber-500/10 border border-amber-500/30 p-3.5 rounded-2xl flex items-center justify-between text-xs text-amber-600 dark:text-amber-300">
+          <div className="flex items-center gap-2 font-medium">
+            <span className="text-base">⚡</span>
+            <span>
+              <strong>Draft Dipulihkan:</strong> Data inputan nota dari sesi sebelumnya berhasil dimuat kembali otomatis.
+            </span>
+          </div>
+          <button
+            type="button"
+            onClick={handleClearDraft}
+            className="text-rose-500 hover:text-rose-600 font-bold underline shrink-0 text-xs ml-2"
+          >
+            Reset Draft Form
+          </button>
+        </div>
+      )}
 
       <form onSubmit={handleSubmit} noValidate className="space-y-6">
         {/* Card 1: Informasi Toko & Tanggal */}
@@ -689,7 +825,6 @@ export default function InvoicePage() {
                   key={index}
                   className="bg-slate-50 dark:bg-slate-950/60 p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 grid grid-cols-1 md:grid-cols-12 gap-3 items-center"
                 >
-                  {/* BARANG SEARCHABLE AUTOCOMPLETE */}
                   <div className="md:col-span-4 space-y-1">
                     <label className="text-[10px] font-bold text-slate-400 block mb-1">
                       Produk #{index + 1}
