@@ -6,6 +6,7 @@ import Link from 'next/link'
 
 interface PaymentLog {
   amount: number
+  discount_bs?: number
   date: string
   sales_name: string
 }
@@ -42,9 +43,9 @@ export default function SettlementPage() {
   // ⚠️ State Modal Konfirmasi Setoran
   const [isConfirmModalOpen, setIsConfirmModalOpen] = useState(false)
 
-  // State form input setoran per transaksi
+  // State form input setoran per transaksi (Termasuk discount / potongan BS)
   const [settlementData, setSettlementData] = useState<{
-    [key: number]: { amount: string; newDueDate: string }
+    [key: number]: { amount: string; discount: string; newDueDate: string }
   }>({})
 
   const isInitialLoadDone = useRef(false)
@@ -99,7 +100,7 @@ export default function SettlementPage() {
 
       setSalesList(uniqueSales)
 
-      // 🎯 Auto-select jika hanya ada 1 sales (misal: Eko) & belum ada pilihan
+      // 🎯 Auto-select jika hanya ada 1 sales & belum ada pilihan
       if (uniqueSales.length === 1 && !selectedSales) {
         setSelectedSales(uniqueSales[0])
       }
@@ -124,8 +125,8 @@ export default function SettlementPage() {
         .select('*')
         .eq('is_carried', true)
         .eq('assigned_sales', selectedSales)
-        .order('customer_name', { ascending: true }) // 👈 Urutkan Nama Toko A-Z agar nota toko yang sama sejajar
-        .order('id', { ascending: false })            // 👈 Urutkan nota terbaru di atas untuk toko yang sama
+        .order('customer_name', { ascending: true })
+        .order('id', { ascending: false })
 
       if (error) {
         showToast('Gagal mengambil nota sales: ' + error.message, 'error')
@@ -139,6 +140,7 @@ export default function SettlementPage() {
             if (!updatedMap[item.id]) {
               updatedMap[item.id] = {
                 amount: '0',
+                discount: '0',
                 newDueDate: item.due_date || '',
               }
             }
@@ -154,7 +156,7 @@ export default function SettlementPage() {
 
   // 🚨 PERINGATAN REFRESH/PINDAH HALAMAN JIKA ADA NOMINAL INPUT > 0
   const hasUnsavedInput = Object.values(settlementData).some(
-    (item) => Number(item.amount) > 0
+    (item) => Number(item.amount) > 0 || Number(item.discount) > 0
   )
 
   useEffect(() => {
@@ -168,7 +170,11 @@ export default function SettlementPage() {
     return () => window.removeEventListener('beforeunload', handleBeforeUnload)
   }, [hasUnsavedInput, loading])
 
-  const handleInputChange = (id: number, field: 'amount' | 'newDueDate', value: string) => {
+  const handleInputChange = (
+    id: number,
+    field: 'amount' | 'discount' | 'newDueDate',
+    value: string
+  ) => {
     setSettlementData((prev) => ({
       ...prev,
       [id]: {
@@ -203,20 +209,12 @@ export default function SettlementPage() {
       for (const item of carriedNotes) {
         const input = settlementData[item.id]
         const addedPaid = Number(input?.amount) || 0
+        const discountVal = Number(input?.discount) || 0
 
-        const oldHistory = Array.isArray(item.payment_history) ? item.payment_history : []
-        let updatedHistory = [...oldHistory]
-
-        if (addedPaid > 0) {
-          updatedHistory.push({
-            amount: addedPaid,
-            date: new Date().toISOString(),
-            sales_name: selectedSales,
-          })
-        }
-
+        // Adjusted Total Price jika ada Retur/BS
+        const newTotalPrice = (item.total_price || 0) - discountVal
         const newTotalPaid = (item.paid_amount || 0) + addedPaid
-        const remainingAfter = item.total_price - newTotalPaid
+        const remainingAfter = newTotalPrice - newTotalPaid
 
         let newStatus = 'UNPAID'
         if (remainingAfter <= 0) {
@@ -225,9 +223,22 @@ export default function SettlementPage() {
           newStatus = 'PARTIAL'
         }
 
+        const oldHistory = Array.isArray(item.payment_history) ? item.payment_history : []
+        let updatedHistory = [...oldHistory]
+
+        if (addedPaid > 0 || discountVal > 0) {
+          updatedHistory.push({
+            amount: addedPaid,
+            discount_bs: discountVal,
+            date: new Date().toISOString(),
+            sales_name: selectedSales,
+          })
+        }
+
         const { error } = await supabase
           .from('transactions')
           .update({
+            total_price: newTotalPrice,
             paid_amount: newTotalPaid,
             payment_status: newStatus,
             due_date: input?.newDueDate || item.due_date,
@@ -379,27 +390,43 @@ export default function SettlementPage() {
                     <tr>
                       <th className="py-3.5 px-5">Toko / Pembeli</th>
                       <th className="py-3.5 px-5 text-right">Sisa Tagihan</th>
-                      <th className="py-3.5 px-5 w-48 text-center">Bayar Hari Ini (Rp)</th>
-                      <th className="py-3.5 px-5 w-44 text-center">Janji Bayar Baru</th>
+                      <th className="py-3.5 px-5 w-36 text-center">Potong BS (Rp)</th>
+                      <th className="py-3.5 px-5 w-40 text-center">Bayar Hari Ini (Rp)</th>
+                      <th className="py-3.5 px-5 w-40 text-center">Janji Bayar Baru</th>
                       <th className="py-3.5 px-5 text-center">Aksi Cepat</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-800/60 font-medium">
                     {carriedNotes.map((tx) => {
-                      const remaining = (tx.total_price || 0) - (tx.paid_amount || 0)
-                      const currentInput = settlementData[tx.id] || { amount: '0', newDueDate: '' }
+                      const currentInput = settlementData[tx.id] || { amount: '0', discount: '0', newDueDate: '' }
+                      const discountVal = Number(currentInput.discount) || 0
+                      
+                      // Sisa tagihan dikurangi retur BS
+                      const adjustedTotalPrice = (tx.total_price || 0) - discountVal
+                      const remaining = adjustedTotalPrice - (tx.paid_amount || 0)
 
                       return (
                         <tr key={tx.id} className="hover:bg-slate-800/30 transition">
                           <td className="py-3.5 px-5">
                             <div className="font-bold text-slate-100 text-sm">{tx.customer_name}</div>
                             <div className="text-[11px] text-slate-500 mt-0.5 font-normal">
-                              Total Nota: Rp {(tx.total_price || 0).toLocaleString('id-ID')}
+                              Total Nota Awal: Rp {(tx.total_price || 0).toLocaleString('id-ID')}
                             </div>
                           </td>
 
                           <td className="py-3.5 px-5 text-right font-bold text-rose-400 text-sm">
                             Rp {remaining.toLocaleString('id-ID')}
+                          </td>
+
+                          {/* Input Potongan BS */}
+                          <td className="py-3.5 px-5">
+                            <input
+                              type="number"
+                              value={currentInput.discount}
+                              onChange={(e) => handleInputChange(tx.id, 'discount', e.target.value)}
+                              placeholder="0"
+                              className="w-full px-3 py-2 bg-[#070c1a] border border-amber-900/50 rounded-xl text-right font-bold text-amber-400 focus:outline-none focus:border-amber-500 transition text-xs"
+                            />
                           </td>
 
                           {/* Input Bayar */}
