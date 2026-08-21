@@ -46,6 +46,33 @@ const VEHICLE_OPTIONS = [
   'BG 8936 IC',
 ]
 
+// Helper function untuk menghitung ulang akumulasi muatan barang dari teks produk
+const recalculateAggregatedItems = (productStrings: string[]): AggregatedItem[] => {
+  const map = new Map<string, { name: string; unit: string; totalQty: number }>()
+
+  productStrings.forEach((pStr) => {
+    const itemStrings = pStr.split(', ')
+    itemStrings.forEach((itemStr) => {
+      const match = itemStr.trim().match(/^(\d+)\s+(Dus|Pcs)\s+(.+)$/i)
+      if (match) {
+        const qty = Number(match[1])
+        const unit = match[2].toUpperCase()
+        const name = match[3].trim()
+        const key = `${name.toLowerCase()}__${unit}`
+
+        if (map.has(key)) {
+          const current = map.get(key)!
+          map.set(key, { ...current, totalQty: current.totalQty + qty })
+        } else {
+          map.set(key, { name, unit, totalQty: qty })
+        }
+      }
+    })
+  })
+
+  return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name))
+}
+
 export default function DeliveryRekapPage() {
   const [activeTab, setActiveTab] = useState<'create' | 'saved'>('create')
   
@@ -83,23 +110,25 @@ export default function DeliveryRekapPage() {
   const fetchTransactionsByDate = async (dateStr: string) => {
     setLoading(true)
 
-    // 1. Ambil ID transaksi yang SUDAH dimuat dalam rekap delivery pada tanggal tersebut
+    // 1. Ambil SELURUH ID transaksi yang SUDAH PERNAH dimasukkan ke dalam rekap delivery manapun
     const { data: existingDeliveries } = await supabase
       .from('deliveries')
       .select('transaction_ids')
-      .eq('delivery_date', dateStr)
 
-    const usedTxIds = existingDeliveries?.flatMap((d) => d.transaction_ids || []) || []
+    const usedTxIds = Array.from(
+      new Set(existingDeliveries?.flatMap((d) => d.transaction_ids || []) || [])
+    )
 
-    // 2. Query Transaksi Antrean Delivery
+    // 2. Query Transaksi Antrean Delivery (Diurutkan berdasarkan Nama Toko A-Z agar nota ganda berdampingan)
     let query = supabase
       .from('transactions')
       .select('*')
-      // 🟢 MENGGUNAKAN .lte AGAR NOTA TUNGGAKAN KEMARIN (SEPERTI SMA 15) TETAP MUNCUL HARI INI
       .lte('transaction_date', dateStr)
       .neq('payment_status', 'CANCELLED')
       .neq('delivery_status', 'DELIVERED')
-      .order('transaction_date', { ascending: true })
+      .neq('delivery_status', 'IN_DELIVERY')
+      .order('customer_name', { ascending: true }) // 👈 Urutkan Nama Toko A-Z
+      .order('transaction_date', { ascending: true }) // 👈 Jika toko sama, urutkan tanggal transaksi tertua
 
     if (usedTxIds.length > 0) {
       query = query.not('id', 'in', `(${usedTxIds.join(',')})`)
@@ -111,19 +140,16 @@ export default function DeliveryRekapPage() {
       console.error('Error fetching transactions:', error.message)
     } else if (data) {
       setTransactions(data)
-      // 🔴 AUTO CHECKLIST DI-OFF-KAN: default kosongkan pilihan centang
       setSelectedTxIds([])
     }
     setLoading(false)
   }
 
-  // 🟢 Fungsi instan tanpa pop-up konfirmasi untuk bersihkan nota susulan/lama
+  // Fungsi instan tanpa pop-up konfirmasi untuk bersihkan nota susulan/lama
   const handleMarkAsDelivered = async (txId: number, customerName: string) => {
-    // 1. Hilangkan langsung dari layar
     setTransactions((prev) => prev.filter((t) => t.id !== txId))
     setSelectedTxIds((prev) => prev.filter((id) => id !== txId))
 
-    // 2. Update status ke Supabase
     const { error } = await supabase
       .from('transactions')
       .update({ delivery_status: 'DELIVERED' })
@@ -237,6 +263,65 @@ export default function DeliveryRekapPage() {
     }
   }
 
+  // 🔄 AKSI PENANGANAN NOTA RETUR (TOKO TUTUP / NOTA DIBAWA BALIK)
+  const handleReturnStore = async (storeIndex: number) => {
+    if (!selectedDeliveryDetail) return
+
+    const store = selectedDeliveryDetail.stores_data[storeIndex]
+    const txId = store.transaction_id || selectedDeliveryDetail.transaction_ids?.[storeIndex]
+
+    if (!confirm(`Toko ${store.customer_name} tutup/retur? Nota ini akan dikembalikan ke antrean rekap baru.`)) return
+
+    setProcessingIndex(storeIndex)
+
+    // 1. Kembalikan status transaksi ke PENDING di database
+    if (txId) {
+      await supabase
+        .from('transactions')
+        .update({ delivery_status: 'PENDING' })
+        .eq('id', txId)
+    }
+
+    // 2. Keluarkan nota dari rekap pengiriman ini
+    const updatedStores = selectedDeliveryDetail.stores_data.filter((_, i) => i !== storeIndex)
+    const updatedTxIds = (selectedDeliveryDetail.transaction_ids || []).filter((id) => id !== txId)
+    const newTotalCod = Math.max(0, (selectedDeliveryDetail.total_cod || 0) - (store.sisa_piutang || 0))
+
+    // Hitung ulang muatan barang gudang setelah nota ini dikurangi
+    const remainingProducts = updatedStores.map((s) => s.product_name)
+    const updatedAggregatedItems = recalculateAggregatedItems(remainingProducts)
+
+    // 3. Update data rekap pengiriman
+    const { error } = await supabase
+      .from('deliveries')
+      .update({
+        stores_data: updatedStores,
+        transaction_ids: updatedTxIds,
+        aggregated_items: updatedAggregatedItems,
+        total_cod: newTotalCod,
+      })
+      .eq('id', selectedDeliveryDetail.id)
+
+    setProcessingIndex(null)
+
+    if (error) {
+      showToast('Gagal memproses retur nota: ' + error.message, 'error')
+    } else {
+      showToast(`↩️ Nota ${store.customer_name} dikembalikan ke antrean rekap!`, 'success')
+
+      const updatedDetail = {
+        ...selectedDeliveryDetail,
+        stores_data: updatedStores,
+        transaction_ids: updatedTxIds,
+        aggregated_items: updatedAggregatedItems,
+        total_cod: newTotalCod,
+      }
+      setSelectedDeliveryDetail(updatedDetail)
+      fetchSavedDeliveries()
+      fetchTransactionsByDate(selectedDate)
+    }
+  }
+
   // 🗑️ EKSEKUSI PEMBATALAN REKAP PENGIRIMAN
   const executeDeleteDelivery = async () => {
     if (!deleteTargetId) return
@@ -280,29 +365,8 @@ export default function DeliveryRekapPage() {
 
   const aggregatedLoad = useMemo(() => {
     const activeTransactions = transactions.filter((t) => selectedTxIds.includes(t.id))
-    const map = new Map<string, { name: string; unit: string; totalQty: number }>()
-
-    activeTransactions.forEach((tx) => {
-      const itemStrings = tx.product_name.split(', ')
-      itemStrings.forEach((itemStr) => {
-        const match = itemStr.trim().match(/^(\d+)\s+(Dus|Pcs)\s+(.+)$/i)
-        if (match) {
-          const qty = Number(match[1])
-          const unit = match[2].toUpperCase()
-          const name = match[3].trim()
-          const key = `${name.toLowerCase()}__${unit}`
-
-          if (map.has(key)) {
-            const current = map.get(key)!
-            map.set(key, { ...current, totalQty: current.totalQty + qty })
-          } else {
-            map.set(key, { name, unit, totalQty: qty })
-          }
-        }
-      })
-    })
-
-    return Array.from(map.values()).sort((a, b) => a.name.localeCompare(b.name))
+    const productStrings = activeTransactions.map((t) => t.product_name)
+    return recalculateAggregatedItems(productStrings)
   }, [transactions, selectedTxIds])
 
   const activeSelectedTx = transactions.filter((t) => selectedTxIds.includes(t.id))
@@ -839,13 +903,23 @@ export default function DeliveryRekapPage() {
                                 🟢 LUNAS
                               </span>
                             ) : (
-                              <button
-                                onClick={() => handlePayStoreCash(idx)}
-                                disabled={processingIndex === idx}
-                                className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-[11px] px-3 py-1 rounded-lg shadow transition"
-                              >
-                                {processingIndex === idx ? 'Processing...' : '💵 Terima Cash'}
-                              </button>
+                              <div className="flex items-center justify-center gap-1.5">
+                                <button
+                                  onClick={() => handlePayStoreCash(idx)}
+                                  disabled={processingIndex === idx}
+                                  className="bg-emerald-600 hover:bg-emerald-500 disabled:opacity-50 text-white font-bold text-[11px] px-2.5 py-1 rounded-lg shadow transition"
+                                >
+                                  {processingIndex === idx ? 'Processing...' : '💵 Terima Cash'}
+                                </button>
+                                <button
+                                  onClick={() => handleReturnStore(idx)}
+                                  disabled={processingIndex === idx}
+                                  title="Nota dibawa balik karena toko tutup"
+                                  className="bg-rose-950/80 hover:bg-rose-900 border border-rose-800 text-rose-300 disabled:opacity-50 font-bold text-[11px] px-2 py-1 rounded-lg transition"
+                                >
+                                  ❌ Toko Tutup
+                                </button>
+                              </div>
                             )}
                           </td>
                         </tr>

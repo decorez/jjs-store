@@ -124,6 +124,8 @@ export default function SettlementPage() {
         .select('*')
         .eq('is_carried', true)
         .eq('assigned_sales', selectedSales)
+        .order('customer_name', { ascending: true }) // 👈 Urutkan Nama Toko A-Z agar nota toko yang sama sejajar
+        .order('id', { ascending: false })            // 👈 Urutkan nota terbaru di atas untuk toko yang sama
 
       if (error) {
         showToast('Gagal mengambil nota sales: ' + error.message, 'error')

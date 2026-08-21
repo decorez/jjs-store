@@ -78,7 +78,8 @@ export default function CollectionPage() {
       .select('*')
       .neq('payment_status', 'PAID')
       .neq('payment_status', 'CANCELLED')
-      .order('id', { ascending: false })
+      .order('customer_name', { ascending: true }) // 👈 Urutkan Nama Toko A-Z agar nota terpisah bersampingan
+      .order('id', { ascending: false })            // 👈 Urutkan transaksi terbaru di atas untuk toko yang sama
 
     if (error) {
       showToast('Gagal memuat data: ' + error.message, 'error')
